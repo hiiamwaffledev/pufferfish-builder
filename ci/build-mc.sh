@@ -67,12 +67,31 @@ if [[ $FABRIC ]]; then
   MAIN=dev.pufferfish.runtime.FlatMain
   # Baked world: Mixin is never bootstrapped at runtime, so keep its service providers out of the image.
   FLAT_ARGS=(-H:ServiceLoaderFeatureExcludeServices=org.spongepowered.asm.service.IMixinService,org.spongepowered.asm.service.IMixinServiceBootstrap,org.spongepowered.asm.service.IGlobalPropertyService
-    -H:IncludeResourceBundles=net.fabricmc.loader.Messages)
+    -H:IncludeResourceBundles=net.fabricmc.loader.Messages '-H:IncludeResources=pufferfish-baked-mods\.txt')
 else
   MAIN=$(jq -r .mainClass mc/instances/$INST/launch.json)
 fi
 CP=$(tools/aot-cp.sh "$INST")
 log "main $MAIN, $(tr ':' '\n' <<<"$CP" | wc -l) classpath entries"
+# Crema: interpreted mod code calling a method that analysis pruned is FATAL (no fallback), so keep the API surface mods
+# use: the JDK core, Minecraft, the baked Fabric world + loader, and the libraries MC exposes. PF_PRESERVE_LIBS adds jars
+# (basename prefixes), PF_PRESERVE=none disables.
+PRESERVE_ARGS=()
+if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
+  for p in java.lang java.lang.invoke java.lang.reflect java.lang.runtime java.lang.ref java.lang.constant java.util java.util.function \
+           java.util.stream java.util.concurrent java.util.concurrent.atomic java.util.concurrent.locks java.util.regex java.io \
+           java.nio java.nio.file java.nio.charset java.math java.text java.time java.net; do
+    PRESERVE_ARGS+=(-H:Preserve=package=$p); done
+  IFS=: read -ra ENTRIES <<<"$CP"
+  for e in "${ENTRIES[@]}"; do
+    b=$(basename "$e")
+    case $b in
+      classes|minecraft-unsigned.jar|[0-9]*.jar|fabric-loader-*|gson-*|brigadier-*|joml-*|datafixerupper-*|slf4j-api-*) PRESERVE_ARGS+=(-H:Preserve=path=$e);;
+      *) for x in ${PF_PRESERVE_LIBS:-}; do [[ $b == $x* ]] && PRESERVE_ARGS+=(-H:Preserve=path=$e); done;;
+    esac
+  done
+  log "preserve: $(printf '%s\n' "${PRESERVE_ARGS[@]}" | sed 's|.*/||; s|-H:Preserve=package=||' | tr '\n' ' ')"
+fi
 tr ':' '\n' <<<"$CP" | sed 's|^'"$PWD"'/||' > "$L/classpath.txt"
 
 OUT=$PWD/out/$NAME; rm -rf "$OUT"; mkdir -p "$OUT/tmp"
@@ -85,7 +104,7 @@ ARGS=(
   -O${PF_OPT:-2} -H:MaxSurvivorSpaces=3 "${AN_ARGS[@]}" -H:+ReportExceptionStackTraces
   "-H:ConfigurationFileDirectories=$CFG" --exclude-config '.*netty.*\.jar' 'META-INF/native-image/.*'
   --enable-native-access=ALL-UNNAMED --add-exports=java.base/jdk.internal.misc=ALL-UNNAMED "${FLAT_ARGS[@]}"
-  -H:BuildOutputJSONFile=$L/build-output.json "${MODE_ARGS[@]}" ${PF_EXTRA:-} "$MAIN"
+  -H:BuildOutputJSONFile=$L/build-output.json "${MODE_ARGS[@]}" "${PRESERVE_ARGS[@]}" ${PF_EXTRA:-} "$MAIN"
 )
 printf '%s\n' "${ARGS[@]}" | sed "s|$PWD/||g" > "$L/native-image-args.txt"
 log "name=$NAME target=$TARGET mode=$MODE analysis=$ANALYSIS heap=${PF_HEAP:-12g} par=${PF_PAR:-4} gc=${PF_GC:-parallel} opt=${PF_OPT:-2}"
