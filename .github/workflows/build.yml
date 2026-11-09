@@ -3,15 +3,21 @@ name: build
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: ios (object for the phone) | linux (desktop test executable)
+        default: ios
       mode:
         description: vanilla | crema | crema-jit
         default: crema
       instance:
-        description: Minecraft version (vanilla) or <mc>-fabric-<loader>
+        description: Minecraft version (vanilla) or <mc>-fabric-<loader> (baked Fabric API + flat launcher)
         default: "26.3"
+      mods:
+        description: Fabric only, mod URLs to bake (space-separated; empty = Fabric API)
+        default: ""
       analysis:
-        description: rta | pointsto (crema-jit forces pointsto)
-        default: rta
+        description: pointsto | rta (rta only works for vanilla)
+        default: pointsto
       heap:
         description: builder heap (-Xmx)
         default: 12g
@@ -37,9 +43,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     env:
+      PF_TARGET: ${{ inputs.target }}
       PF_MODE: ${{ inputs.mode }}
+      PF_MODS: ${{ inputs.mods }}
       PF_INSTANCE: ${{ inputs.instance }}
-      PF_ANALYSIS: ${{ inputs.mode == 'crema-jit' && 'pointsto' || inputs.analysis }}
+      PF_ANALYSIS: ${{ inputs.analysis }}
       PF_HEAP: ${{ inputs.heap }}
       PF_PAR: ${{ inputs.parallelism }}
       PF_GC: ${{ inputs.gc }}
@@ -53,7 +61,7 @@ jobs:
           nproc; free -h; swapon --show || true; df -h / /mnt
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
-          sudo apt-get install -y -qq zstd >/dev/null
+          sudo apt-get install -y -qq zstd zlib1g-dev build-essential >/dev/null
 
       - name: cache GraalVM downloads
         uses: actions/cache@v4
@@ -62,12 +70,18 @@ jobs:
           key: graalvm-25.0.4.1.1
 
       - name: fetch Minecraft jars
+        env:
+          PF_MODS: ${{ inputs.mods }}
         run: |
           i='${{ inputs.instance }}'
           if [[ $i == *-fabric-* ]]; then ci/fetch-mc.sh "${i%%-fabric-*}" "${i##*-fabric-}"; else ci/fetch-mc.sh "$i"; fi
 
       - name: cross toolchain (official GraalVM CE)
         run: ci/setup-toolchain.sh
+
+      - name: bake Fabric (Knot + Mixin once on the JVM)
+        if: contains(inputs.instance, '-fabric-')
+        run: ci/bake.sh "$PF_INSTANCE"
 
       - name: native-image
         run: ci/build-mc.sh "$PF_INSTANCE" "$PF_MODE"
@@ -76,7 +90,7 @@ jobs:
         env:
           PF_ARTIFACT_KEY: ${{ secrets.PF_ARTIFACT_KEY }}
         run: |
-          case $PF_MODE in vanilla) n=minecraft;; crema) n=minecraft-crema;; crema-jit) n=minecraft-crema-jit;; esac
+          n=$(cat logs/name.txt)
           ci/package.sh "$n"
           echo "PF_NAME=$n" >> "$GITHUB_ENV"
 

@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.."
 L=logs
 {
-  echo "## Pufferfish builder: ${PF_MODE:-?} / ${PF_INSTANCE:-?}"
+  echo "## Pufferfish builder: ${PF_TARGET:-ios} / ${PF_MODE:-?} / ${PF_INSTANCE:-?}"
   echo
   echo "| stage | time | result |"; echo "|---|---|---|"
   [[ -f $L/stages.tsv ]] && while IFS=$'\t' read -r s t r; do

@@ -14,7 +14,9 @@ REL=${OBJ#$PWD/out/$NAME/}
   echo "name=$NAME"; echo "object=$REL"; echo "commit=${GITHUB_SHA:-local}"; echo "run=${GITHUB_RUN_ID:-local}"
   echo "built=$(date -u +%FT%TZ)"; echo "object_sha256=$(sha256sum "$OBJ" | cut -d' ' -f1)"
 } > out/$NAME/build-info.txt
-tar -C out/$NAME -cf - build-info.txt "$REL" | zstd -T0 -12 -q |
+# linux: the executable plus the JDK shared libs native-image writes next to it (libawt.so, ...)
+FILES=("$REL"); [[ $NAME == *-linux ]] && mapfile -t FILES < <(cd out/$NAME && find . -maxdepth 1 -type f ! -name build-info.txt -printf '%P\n')
+tar -C out/$NAME -cf - build-info.txt "${FILES[@]}" | zstd -T0 -12 -q |
   openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PF_ARTIFACT_KEY -out out/$NAME.tar.zst.enc
-rm -f "$OBJ"  # nothing unencrypted lingers in the workspace
+rm -f "$OBJ" out/$NAME/*.so  # nothing unencrypted lingers in the workspace
 { cat out/$NAME/build-info.txt; echo "encrypted=$NAME.tar.zst.enc $(du -h out/$NAME.tar.zst.enc | cut -f1) sha256=$(sha256sum out/$NAME.tar.zst.enc | cut -d' ' -f1)"; } | tee out/artifact.txt
