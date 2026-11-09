@@ -7,7 +7,7 @@ J=${JAVA_HOME:-$PWD/graalvm}/bin
 echo -e "time\tavail_mb\tused_mb\tbuilder_rss_mb\tbuilder_cpu%\tload1" > "$D/memlog.tsv"
 n=0; last=0
 while sleep 10; do
-  pid=$(pgrep -f 'com.oracle.svm.hosted.NativeImageGeneratorRunner' | head -1)
+  pid=$(pgrep -f 'bin/java @.*driverRoot' | head -1)
   read -r rss cpu <<<"$( [[ -n $pid ]] && ps -o rss=,pcpu= -p "$pid" || echo '0 0')"
   awk -v t="$(date -u +%H:%M:%S)" -v r="$rss" -v c="$cpu" -v l="$(cut -d' ' -f1 /proc/loadavg)" \
     '/MemTotal/ {tt=$2} /MemAvailable/ {a=$2} END {printf "%s\t%d\t%d\t%d\t%s\t%s\n", t, a/1024, (tt-a)/1024, r/1024, c, l}' \
