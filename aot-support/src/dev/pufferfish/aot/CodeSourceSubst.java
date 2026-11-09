@@ -23,6 +23,15 @@ final class UrlUtilSubst {
     public static Path getCodeSource(Class<?> cls) {
         return ClassPathIndex.find(cls.getName().replace('.', '/') + ".class");
     }
+
+    /** Fabric's LoaderLibrary/LibClassifier pass getResource(localPath) here; in an image that URL is a
+     *  resource: URI with no jar behind it, so resolve localPath against -Djava.class.path instead. */
+    @Substitute
+    public static Path getCodeSource(java.net.URL url, String localPath) throws net.fabricmc.loader.impl.util.UrlConversionException {
+        Path p = ClassPathIndex.find(localPath);
+        if (p == null) throw new net.fabricmc.loader.impl.util.UrlConversionException("[pufferfish] not on java.class.path: " + localPath + " (" + url + ")");
+        return p;
+    }
 }
 
 final class ClassPathIndex {
