@@ -74,8 +74,8 @@ fi
 CP=$(tools/aot-cp.sh "$INST")
 log "main $MAIN, $(tr ':' '\n' <<<"$CP" | wc -l) classpath entries"
 # Crema: interpreted mod code calling a method that analysis pruned is FATAL (no fallback), so keep the API surface mods
-# use: the JDK core, Minecraft, the baked Fabric world + loader, and the libraries MC exposes. PF_PRESERVE_LIBS adds jars
-# (basename prefixes), PF_PRESERVE=none disables.
+# use. Default: the JDK core (indy string concat, lambdas, records, collections). PF_PRESERVE_LIBS adds whole jars
+# (basename prefixes, e.g. "gson- brigadier-"), PF_PRESERVE=none disables.
 PRESERVE_ARGS=()
 if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
   for p in java.lang java.lang.invoke java.lang.reflect java.lang.runtime java.lang.ref java.lang.constant java.util java.util.function \
@@ -86,7 +86,7 @@ if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
   for e in "${ENTRIES[@]}"; do
     b=$(basename "$e")
     case $b in
-      classes|minecraft-unsigned.jar|[0-9]*.jar|fabric-loader-*|gson-*|brigadier-*|joml-*|datafixerupper-*|slf4j-api-*) PRESERVE_ARGS+=(-H:Preserve=path=$e);;
+      # whole-jar Preserve of MC (+ libs) thrashed a 12g builder heap in analysis (run 42696653613) → opt-in only
       *) for x in ${PF_PRESERVE_LIBS:-}; do [[ $b == $x* ]] && PRESERVE_ARGS+=(-H:Preserve=path=$e); done;;
     esac
   done
