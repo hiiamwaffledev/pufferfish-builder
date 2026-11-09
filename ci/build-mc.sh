@@ -40,7 +40,8 @@ if [[ $MODE == crema-jit ]]; then
   EXTRA_CP+=:$PWD/jit/jit-subst.jar
   MODE_ARGS+=(-H:+GraalJITCompileAtRuntime)
 fi
-AN_ARGS=(); [[ $ANALYSIS == rta ]] && AN_ARGS=(-H:+UseExperimentalReachabilityAnalysis -H:-AOTTrivialInline)
+# -H:-AOTTrivialInline: Graal bug "unexpected encoding: true true" in FrameState (hits RTA and points-to)
+AN_ARGS=(-H:-AOTTrivialInline); [[ $ANALYSIS == rta ]] && AN_ARGS+=(-H:+UseExperimentalReachabilityAnalysis)
 case ${PF_GC:-parallel} in
   serial) GC_ARGS=(-J-XX:-UseParallelGC -J-XX:+UseSerialGC);; g1) GC_ARGS=(-J-XX:-UseParallelGC -J-XX:+UseG1GC);; *) GC_ARGS=(-J-XX:+UseParallelGC);;
 esac
