@@ -1,0 +1,105 @@
+name: build
+# Manual only. Runs on the free public-repo runner (4 vCPU / 16 GB). Output object is encrypted with PF_ARTIFACT_KEY.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: vanilla | crema | crema-jit
+        default: crema
+      instance:
+        description: Minecraft version (vanilla) or <mc>-fabric-<loader>
+        default: "26.3"
+      analysis:
+        description: rta | pointsto (crema-jit forces pointsto)
+        default: rta
+      heap:
+        description: builder heap (-Xmx)
+        default: 12g
+      parallelism:
+        description: compile threads
+        default: "4"
+      gc:
+        description: parallel | serial | g1
+        default: parallel
+      extra:
+        description: extra native-image args
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      PF_MODE: ${{ inputs.mode }}
+      PF_INSTANCE: ${{ inputs.instance }}
+      PF_ANALYSIS: ${{ inputs.mode == 'crema-jit' && 'pointsto' || inputs.analysis }}
+      PF_HEAP: ${{ inputs.heap }}
+      PF_PAR: ${{ inputs.parallelism }}
+      PF_GC: ${{ inputs.gc }}
+      PF_EXTRA: ${{ inputs.extra }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: runner info + free disk
+        run: |
+          set -x
+          nproc; free -h; swapon --show || true; df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+          sudo apt-get install -y -qq zstd >/dev/null
+
+      - name: cache GraalVM downloads
+        uses: actions/cache@v4
+        with:
+          path: .dl
+          key: graalvm-25.0.4.1.1
+
+      - name: fetch Minecraft jars
+        run: |
+          i='${{ inputs.instance }}'
+          if [[ $i == *-fabric-* ]]; then ci/fetch-mc.sh "${i%%-fabric-*}" "${i##*-fabric-}"; else ci/fetch-mc.sh "$i"; fi
+
+      - name: cross toolchain (official GraalVM CE)
+        run: ci/setup-toolchain.sh
+
+      - name: native-image
+        run: ci/build-mc.sh "$PF_INSTANCE" "$PF_MODE"
+
+      - name: encrypt object
+        env:
+          PF_ARTIFACT_KEY: ${{ secrets.PF_ARTIFACT_KEY }}
+        run: |
+          case $PF_MODE in vanilla) n=minecraft;; crema) n=minecraft-crema;; crema-jit) n=minecraft-crema-jit;; esac
+          ci/package.sh "$n"
+          echo "PF_NAME=$n" >> "$GITHUB_ENV"
+
+      - name: upload encrypted object
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PF_NAME }}-encrypted
+          path: out/${{ env.PF_NAME }}.tar.zst.enc
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: summary
+        if: always()
+        run: |
+          free -h; df -h /
+          ci/summary.sh
+          rm -f logs/oom.hprof  # heap dumps hold Minecraft classes/strings; never uploaded
+
+      - name: upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: logs/
+          retention-days: 14
