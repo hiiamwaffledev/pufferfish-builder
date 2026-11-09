@@ -102,7 +102,7 @@ ARGS=(
   --parallelism=${PF_PAR:-4} -H:+UnlockExperimentalVMOptions -H:-ForeignAPISupport "${TARGET_ARGS[@]}"
   -H:TempDirectory=$OUT/tmp -cp "$CP$EXTRA_CP" -o "$OUT/$NAME"
   -O${PF_OPT:-2} -H:MaxSurvivorSpaces=3 "${AN_ARGS[@]}" -H:+ReportExceptionStackTraces
-  "-H:ConfigurationFileDirectories=$CFG" --exclude-config '.*netty.*\.jar' 'META-INF/native-image/.*'
+  "-H:ConfigurationFileDirectories=$CFG$([[ $MODE == crema* && -f aot/cfg-modapi/reachability-metadata.json ]] && echo ,$PWD/aot/cfg-modapi)" --exclude-config '.*netty.*\.jar' 'META-INF/native-image/.*'
   --enable-native-access=ALL-UNNAMED --add-exports=java.base/jdk.internal.misc=ALL-UNNAMED "${FLAT_ARGS[@]}"
   -H:BuildOutputJSONFile=$L/build-output.json "${MODE_ARGS[@]}" "${PRESERVE_ARGS[@]}" ${PF_EXTRA:-} "$MAIN"
 )

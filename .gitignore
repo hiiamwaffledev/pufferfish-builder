@@ -21,3 +21,5 @@ aot-support/build/
 aot-support/*.jar
 jit/build/
 jit/*.jar
+aot/cfg-modapi/
+.modapi/
