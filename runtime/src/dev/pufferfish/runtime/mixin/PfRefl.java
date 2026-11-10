@@ -97,4 +97,19 @@ public final class PfRefl {
             f.set(o, v);
         }
     }
+
+    /**
+     * Lookup.unreflect for runtime mods. Crema's handle from unreflect(interface method) dies with "Erroneous dispatching
+     * for seed" when invoked (any interface, JDK ones too); findVirtual for the same method dispatches fine.
+     */
+    public static java.lang.invoke.MethodHandle unreflect(java.lang.invoke.MethodHandles.Lookup l, Method m) throws IllegalAccessException {
+        Class<?> d = m.getDeclaringClass();
+        int mod = m.getModifiers();
+        if (d.isInterface() && !java.lang.reflect.Modifier.isStatic(mod) && !java.lang.reflect.Modifier.isPrivate(mod)) {
+            try {
+                return l.findVirtual(d, m.getName(), java.lang.invoke.MethodType.methodType(m.getReturnType(), m.getParameterTypes()));
+            } catch (NoSuchMethodException | IllegalAccessException e) { /* fall through: same access rules as unreflect */ }
+        }
+        return l.unreflect(m);
+    }
 }

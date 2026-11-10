@@ -383,6 +383,13 @@ public final class RuntimeMixins {
                     && (c.name.equals("newProxyInstance") || c.name.equals("isProxyClass") || c.name.equals("getInvocationHandler"))) {
                 c.owner = "dev/pufferfish/runtime/mixin/PfProxy"; ch = true; continue;
             }
+            // Lookup.unreflect(interface method) → PfRefl.unreflect (Crema's unreflected interface handles fail to dispatch)
+            if (n instanceof MethodInsnNode c && c.getOpcode() == Opcodes.INVOKEVIRTUAL && c.owner.equals("java/lang/invoke/MethodHandles$Lookup")
+                    && c.name.equals("unreflect") && c.desc.equals("(Ljava/lang/reflect/Method;)Ljava/lang/invoke/MethodHandle;")) {
+                m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, "dev/pufferfish/runtime/mixin/PfRefl", "unreflect",
+                        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/reflect/Method;)Ljava/lang/invoke/MethodHandle;", false));
+                ch = true; continue;
+            }
             String owner = n instanceof MethodInsnNode c ? c.owner : n instanceof FieldInsnNode f ? f.owner : null;
             if (owner == null || !UNAVAILABLE.matcher(owner).matches()) continue;
             String what = owner.replace('/', '.') + "." + (n instanceof MethodInsnNode c ? c.name : ((FieldInsnNode) n).name);
