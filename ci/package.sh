@@ -16,6 +16,14 @@ REL=${OBJ#$PWD/out/$NAME/}
 } > out/$NAME/build-info.txt
 # linux: the executable plus the JDK shared libs native-image writes next to it (libawt.so, ...)
 FILES=("$REL"); [[ $NAME == *-linux ]] && mapfile -t FILES < <(cd out/$NAME && find . -maxdepth 1 -type f ! -name build-info.txt -printf '%P\n')
+# runtime-mixin hooks: ids baked into the image must match what the phone bundles, so ship this build's exact
+# hooks mod (generated stand-ins only) and id table with it
+INST=${PF_INSTANCE:-}
+if [[ -n $INST && -f baked/$INST/res/pufferfish-hooks.txt ]]; then
+  mkdir -p out/$NAME/hooks
+  cp baked/$INST/res/pufferfish-hooks.txt mc/instances/$INST/game/mods/pufferfish-hooks.jar out/$NAME/hooks/
+  FILES+=(hooks/pufferfish-hooks.txt hooks/pufferfish-hooks.jar)
+fi
 tar -C out/$NAME -cf - build-info.txt "${FILES[@]}" | zstd -T0 -12 -q |
   openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PF_ARTIFACT_KEY -out out/$NAME.tar.zst.enc
 rm -f "$OBJ" out/$NAME/*.so  # nothing unencrypted lingers in the workspace

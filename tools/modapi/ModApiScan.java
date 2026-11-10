@@ -1,5 +1,6 @@
 import org.objectweb.asm.*;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.*;
 import java.io.*;
 import java.lang.reflect.*;
 import java.net.*;
@@ -21,7 +22,11 @@ public class ModApiScan {
     static final java.util.regex.Pattern SKIP = java.util.regex.Pattern.compile(
         "(java|javax|jdk|sun|com/sun|org/apache/logging|org/slf4j)/");
     static final Set<String> modClasses = new HashSet<>();
-    static int jars, classes;
+    static int jars, classes, mixinRemapped;
+    /** mixin class -> its target classes. Runtime mixins run as companions that reach @Shadow / @Accessor / @Invoker
+     *  members on the real target reflectively, so refs to a mixin's own class are registered on its targets. */
+    static final Map<String, List<String>> mixinTargets = new HashMap<>();
+    static final List<Ref> mixinRefs = new ArrayList<>();
 
     public static void main(String[] a) throws Exception {
         Path out = Paths.get(a[0]);
@@ -37,6 +42,11 @@ public class ModApiScan {
         // Registering a type makes reflective lookups on it exact: members we didn't list then throw
         // MissingReflectionRegistrationError instead of NoSuchMethodException, which breaks code that probes optional
         // methods (Fabric's Log4jLogHandler). Skip the JDK (its core packages are preserved whole) and logging libs.
+        for (Ref r : List.copyOf(refs)) {
+            List<String> ts = mixinTargets.get(r.owner);
+            if (ts != null) for (String t : ts) { refs.add(new Ref(t, r.name, r.desc, r.field)); mixinRemapped++; }
+        }
+        for (Ref r : mixinRefs) for (String t : mixinTargets.getOrDefault(r.owner, List.of())) { refs.add(new Ref(t, r.name, r.desc, r.field)); mixinRemapped++; }
         refs.removeIf(r -> SKIP.matcher(r.owner).lookingAt());
         ClassLoader cl = new URLClassLoader(urls.toArray(URL[]::new), ClassLoader.getPlatformClassLoader());
         Map<String, Map<String, Object>> types = new TreeMap<>();
@@ -79,6 +89,7 @@ public class ModApiScan {
         j.append("\n  ]\n}\n");
         Files.createDirectories(out);
         Files.writeString(out.resolve("reachability-metadata.json"), j);
+        System.out.printf("[modapi] %d mixin classes, %d refs remapped onto mixin targets%n", mixinTargets.size(), mixinRemapped);
         System.out.printf("[modapi] %d jars, %d classes scanned; %d external refs → %d resolved in %d types, %d unresolved (%d unknown owners)%n",
                 jars, classes, refs.size(), ok, types.size(), missing, missingOwners.size());
     }
@@ -99,6 +110,7 @@ public class ModApiScan {
         ClassReader r;
         try { r = new ClassReader(b); } catch (Throwable t) { return; }
         modClasses.add(r.getClassName());
+        mixin(r);
         r.accept(new ClassVisitor(Opcodes.ASM9) {
             @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] ex) {
                 return new MethodVisitor(Opcodes.ASM9) {
@@ -112,6 +124,50 @@ public class ModApiScan {
                 };
             }
         }, ClassReader.SKIP_FRAMES);
+    }
+
+    static final String SHADOW = "Lorg/spongepowered/asm/mixin/Shadow;", ACCESSOR = "Lorg/spongepowered/asm/mixin/gen/Accessor;",
+            INVOKER = "Lorg/spongepowered/asm/mixin/gen/Invoker;";
+
+    static void mixin(ClassReader r) {
+        ClassNode cn = new ClassNode();
+        try { r.accept(cn, ClassReader.SKIP_CODE | ClassReader.SKIP_FRAMES); } catch (Throwable t) { return; }
+        AnnotationNode mx = find(cn.visibleAnnotations, cn.invisibleAnnotations, "Lorg/spongepowered/asm/mixin/Mixin;");
+        if (mx == null || mx.values == null) return;
+        List<String> ts = new ArrayList<>();
+        for (int i = 0; i < mx.values.size(); i += 2) {
+            Object v = mx.values.get(i + 1);
+            if ("value".equals(mx.values.get(i)) && v instanceof List<?> l) for (Object t : l) if (t instanceof Type ty) ts.add(ty.getInternalName());
+            if ("targets".equals(mx.values.get(i)) && v instanceof List<?> l) for (Object t : l) ts.add(String.valueOf(t).replace('.', '/'));
+        }
+        if (ts.isEmpty()) return;
+        mixinTargets.put(cn.name, ts);
+        for (FieldNode f : cn.fields) if (find(f.visibleAnnotations, f.invisibleAnnotations, SHADOW) != null)
+            mixinRefs.add(new Ref(cn.name, strip(f.name), f.desc, true));
+        for (MethodNode m : cn.methods) {
+            if (find(m.visibleAnnotations, m.invisibleAnnotations, SHADOW) != null) { mixinRefs.add(new Ref(cn.name, strip(m.name), m.desc, false)); continue; }
+            AnnotationNode acc = find(m.visibleAnnotations, m.invisibleAnnotations, ACCESSOR), inv = find(m.visibleAnnotations, m.invisibleAnnotations, INVOKER);
+            if (acc == null && inv == null) continue;
+            String member = value(acc != null ? acc : inv);
+            if (member == null) member = infer(m.name, acc != null);
+            if (acc != null) mixinRefs.add(new Ref(cn.name, member, "", true));
+            else if (member.equals("<init>")) mixinRefs.add(new Ref(cn.name, "<init>", Type.getMethodDescriptor(Type.VOID_TYPE, Type.getArgumentTypes(m.desc)), false));
+            else mixinRefs.add(new Ref(cn.name, member, m.desc, false));
+        }
+    }
+    static String strip(String n) { return n.startsWith("shadow$") ? n.substring(7) : n; }
+    static String value(AnnotationNode a) {
+        if (a.values != null) for (int i = 0; i < a.values.size(); i += 2) if ("value".equals(a.values.get(i))) return String.valueOf(a.values.get(i + 1));
+        return null;
+    }
+    static String infer(String n, boolean accessor) {
+        for (String p : accessor ? new String[] { "get", "set", "is" } : new String[] { "call", "invoke", "new", "create" })
+            if (n.startsWith(p) && n.length() > p.length()) { String r = n.substring(p.length()); return Character.toLowerCase(r.charAt(0)) + r.substring(1); }
+        return n;
+    }
+    static AnnotationNode find(List<AnnotationNode> a, List<AnnotationNode> b, String desc) {
+        for (List<AnnotationNode> l : Arrays.asList(a, b)) if (l != null) for (AnnotationNode x : l) if (x.desc.equals(desc)) return x;
+        return null;
     }
 
     static void handle(Handle h) { add(h.getOwner(), h.getName(), h.getDesc(), h.getTag() <= Opcodes.H_PUTSTATIC); }

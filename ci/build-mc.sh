@@ -69,7 +69,7 @@ if [[ $FABRIC ]]; then
   MAIN=dev.pufferfish.runtime.FlatMain
   # Baked world: Mixin is never bootstrapped at runtime, so keep its service providers out of the image.
   FLAT_ARGS=(-H:ServiceLoaderFeatureExcludeServices=org.spongepowered.asm.service.IMixinService,org.spongepowered.asm.service.IMixinServiceBootstrap,org.spongepowered.asm.service.IGlobalPropertyService
-    -H:IncludeResourceBundles=net.fabricmc.loader.Messages '-H:IncludeResources=pufferfish-baked-mods\.txt')
+    -H:IncludeResourceBundles=net.fabricmc.loader.Messages '-H:IncludeResources=pufferfish-(baked-mods|hooks)\.txt')
 else
   MAIN=$(jq -r .mainClass mc/instances/$INST/launch.json)
 fi
@@ -87,6 +87,8 @@ if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
     # (Charset.standardProvider → sun.nio.cs.StandardCharsets, FileSystems holder, DefaultInterface)
     [[ $TARGET == ios && $p =~ ^java\.(nio\.charset|nio\.file|net)$ ]] && continue
     PRESERVE_ARGS+=(-H:Preserve=package=$p); done
+  # runtime mixins: interpreted companion classes call these helpers directly
+  [[ $INST == *-fabric-* ]] && PRESERVE_ARGS+=(-H:Preserve=package=dev.pufferfish.runtime.mixin)
   IFS=: read -ra ENTRIES <<<"$CP"
   for e in "${ENTRIES[@]}"; do
     b=$(basename "$e")

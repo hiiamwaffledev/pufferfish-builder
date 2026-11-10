@@ -36,9 +36,25 @@ public final class FlatMain extends FabricLauncherBase {
         void add(Path p) {
             try { addURL(p.toUri().toURL()); } catch (java.net.MalformedURLException e) { throw new RuntimeException(e); }
         }
+        /** Every runtime mod class goes through RuntimeMixins (mixin companions, added-interface/accessor call sites). */
+        @Override protected Class<?> findClass(String name) throws ClassNotFoundException {
+            String internal = name.replace('.', '/');
+            if (internal.startsWith("pf/dispatch/")) {
+                byte[] d = dev.pufferfish.runtime.mixin.RuntimeMixins.dispatcher(internal.substring("pf/dispatch/".length()));
+                if (d != null) return defineClass(name, d, 0, d.length);
+            }
+            java.net.URL u = findResource(internal + ".class");
+            if (u == null) throw new ClassNotFoundException(name);
+            byte[] b;
+            try (InputStream in = u.openStream()) { b = in.readAllBytes(); } catch (IOException e) { throw new ClassNotFoundException(name, e); }
+            try { b = dev.pufferfish.runtime.mixin.RuntimeMixins.transform(internal, b); }
+            catch (Throwable t) { Log.warn(LogCategory.GENERAL, "[pufferfish] transform failed for %s: %s", name, t); }
+            return defineClass(name, b, 0, b.length);
+        }
     }
     private final RuntimeModLoader cl = new RuntimeModLoader(FlatMain.class.getClassLoader());
     private final Set<Path> added = new HashSet<>();
+    private final Set<String> bakedIds = new HashSet<>();
     private GameProvider provider;
 
     public static void main(String[] args) {
@@ -74,6 +90,7 @@ public final class FlatMain extends FabricLauncherBase {
         loader.loadClassTweakers(); // parsed for API queries only; already applied at bake time
         provider.unlockClassPath(this);
         reportMods(loader);
+        setupRuntimeMixins(loader);
 
         try {
             loader.invokeEntrypoints("preLaunch", PreLaunchEntrypoint.class, PreLaunchEntrypoint::onPreLaunch);
@@ -84,7 +101,7 @@ public final class FlatMain extends FabricLauncherBase {
 
     /** Baked mods come from res/pufferfish-baked-mods.txt (written by BakeMain). Everything else is a runtime mod. */
     private void reportMods(FabricLoaderImpl loader) {
-        Set<String> baked = new HashSet<>();
+        Set<String> baked = bakedIds;
         try (InputStream in = FlatMain.class.getClassLoader().getResourceAsStream("pufferfish-baked-mods.txt")) {
             if (in != null) for (String l : new String(in.readAllBytes()).split("\n")) if (!l.isBlank()) baked.add(l.trim());
         } catch (IOException ignored) { }
@@ -95,9 +112,26 @@ public final class FlatMain extends FabricLauncherBase {
             n++;
             Collection<String> mixins = m.getMetadata().getMixinConfigs(EnvType.CLIENT);
             if (mixins.isEmpty()) Log.info(LogCategory.GENERAL, "[pufferfish] runtime mod %s %s (loaded at runtime, interpreted)", id, m.getMetadata().getVersion().getFriendlyString());
-            else Log.warn(LogCategory.GENERAL, "[pufferfish] runtime mod %s has mixins %s: NOT applied (runtime mixins not supported yet), the mod may misbehave", id, mixins);
+            else Log.info(LogCategory.GENERAL, "[pufferfish] runtime mod %s %s with mixins %s (runtime mixins)", id, m.getMetadata().getVersion().getFriendlyString(), mixins);
         }
         Log.info(LogCategory.GENERAL, "[pufferfish] %d baked mods, %d runtime mods", baked.size(), n);
+    }
+
+    /** Runtime mods' mixins: companions + hook slots (dev.pufferfish.runtime.mixin). Before any mod class loads. */
+    private void setupRuntimeMixins(FabricLoaderImpl loader) {
+        List<Object[]> mods = new ArrayList<>();
+        for (net.fabricmc.loader.impl.ModContainerImpl m : loader.getModsInternal()) {
+            if (bakedIds.contains(m.getMetadata().getId())) continue;
+            Collection<String> cfgs = m.getMetadata().getMixinConfigs(EnvType.CLIENT);
+            if (!cfgs.isEmpty()) mods.add(new Object[] { m.getMetadata().getId(), cfgs, m.getRootPaths() });
+        }
+        if (mods.isEmpty()) return;
+        long t0 = System.nanoTime();
+        dev.pufferfish.runtime.mixin.RuntimeMixins.setup(cl, mods);
+        dev.pufferfish.runtime.mixin.RuntimeMixins.installHooks();
+        List<String> rep = dev.pufferfish.runtime.mixin.RuntimeMixins.report();
+        Log.info(LogCategory.GENERAL, "[pufferfish] runtime mixins: %s (%d ms)", rep.get(0), (System.nanoTime() - t0) / 1_000_000);
+        for (String l : rep.subList(1, rep.size())) Log.warn(LogCategory.GENERAL, "[pufferfish]   %s", l);
     }
 
     private GameProvider createGameProvider(String[] args) {

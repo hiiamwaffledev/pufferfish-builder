@@ -87,6 +87,10 @@ jobs:
         if: startsWith(inputs.mode, 'crema')
         run: ci/modapi.sh "$PF_INSTANCE"
 
+      - name: runtime-mixin hooks (HookGen + rebake)
+        if: startsWith(inputs.mode, 'crema') && contains(inputs.instance, '-fabric-')
+        run: ci/hooks.sh "$PF_INSTANCE"
+
       - name: native-image
         run: ci/build-mc.sh "$PF_INSTANCE" "$PF_MODE"
 
