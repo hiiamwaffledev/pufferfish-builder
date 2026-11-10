@@ -40,18 +40,21 @@ public final class PfRefl {
         });
     }
 
+    /** owner "*": a mixin with several targets — resolve on the object's runtime class */
+    static String own(Object o, String owner) { return owner.equals("*") ? o.getClass().getName().replace('.', '/') : owner; }
+
     // field get/set, boxed; the rewriter adds the unbox/checkcast
     public static Object get(Object o, String owner, String name) {
-        try { return field(owner, name).get(o); } catch (IllegalAccessException e) { throw new IllegalAccessError(e.getMessage()); }
+        try { return field(own(o, owner), name).get(o); } catch (IllegalAccessException e) { throw new IllegalAccessError(e.getMessage()); }
     }
     public static void set(Object o, Object v, String owner, String name) {
         try {
-            Field f = field(owner, name);
+            Field f = field(own(o, owner), name);
             if (Modifier.isFinal(f.getModifiers())) FinalSetter.set(f, o, v); else f.set(o, v);
         } catch (IllegalAccessException e) { throw new IllegalAccessError(e.getMessage()); }
     }
     public static Object invoke(Object o, Object[] args, String owner, String name, String desc) {
-        try { return method(owner, name, desc).invoke(o, args); }
+        try { return method(own(o, owner), name, desc).invoke(o, args); }
         catch (InvocationTargetException e) { throw sneaky(e.getCause()); }
         catch (IllegalAccessException e) { throw new IllegalAccessError(e.getMessage()); }
     }
