@@ -18,6 +18,8 @@ import java.util.zip.*;
 public class ModApiScan {
     record Ref(String owner, String name, String desc, boolean field) {}
     static final Set<Ref> refs = new HashSet<>();
+    static final java.util.regex.Pattern SKIP = java.util.regex.Pattern.compile(
+        "(java|javax|jdk|sun|com/sun|org/apache/logging|org/slf4j)/");
     static final Set<String> modClasses = new HashSet<>();
     static int jars, classes;
 
@@ -32,6 +34,10 @@ public class ModApiScan {
         }
         // classes defined by the mods themselves (and their jar-in-jar libs) don't need registration
         refs.removeIf(r -> modClasses.contains(r.owner));
+        // Registering a type makes reflective lookups on it exact: members we didn't list then throw
+        // MissingReflectionRegistrationError instead of NoSuchMethodException, which breaks code that probes optional
+        // methods (Fabric's Log4jLogHandler). Skip the JDK (its core packages are preserved whole) and logging libs.
+        refs.removeIf(r -> SKIP.matcher(r.owner).lookingAt());
         ClassLoader cl = new URLClassLoader(urls.toArray(URL[]::new), ClassLoader.getPlatformClassLoader());
         Map<String, Map<String, Object>> types = new TreeMap<>();
         int ok = 0, missing = 0;
