@@ -82,6 +82,9 @@ if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
   for p in java.lang java.lang.invoke java.lang.reflect java.lang.runtime java.lang.ref java.lang.constant java.util java.util.function \
            java.util.stream java.util.concurrent java.util.concurrent.atomic java.util.concurrent.locks java.util.regex java.io \
            java.nio java.nio.file java.nio.charset java.math java.text java.time java.net; do
+    # ios: these reach JDK objects whose types the Darwin cross build initializes at run time
+    # (Charset.standardProvider → sun.nio.cs.StandardCharsets, FileSystems holder, DefaultInterface)
+    [[ $TARGET == ios && $p =~ ^java\.(nio\.charset|nio\.file|net)$ ]] && continue
     PRESERVE_ARGS+=(-H:Preserve=package=$p); done
   IFS=: read -ra ENTRIES <<<"$CP"
   for e in "${ENTRIES[@]}"; do
