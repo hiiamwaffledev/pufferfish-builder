@@ -44,10 +44,36 @@ public final class InterfaceAdapters {
     private static void call(MethodHandle h) {
         try {
             h.invokeWithArguments();
-        } catch (RuntimeException | Error e) {
-            throw e;
         } catch (Throwable t) {
+            // A mod the user dropped in (runtime mod loader) must not take the whole game down: log it and carry on
+            // without that initializer. Baked mods (Fabric API) failing is a real bug → rethrow.
+            String owner = runtimeOwner(h);
+            if (owner == null) owner = runtimeFrame(t);
+            if (owner != null) {
+                System.err.println("[pufferfish] runtime mod initializer " + owner + " failed, continuing without it: " + t);
+                t.printStackTrace();
+                return;
+            }
+            if (t instanceof RuntimeException r) throw r;
+            if (t instanceof Error e) throw e;
             throw new RuntimeException(t);
         }
+    }
+
+    /** first runtime-mod class in the failure's stack (frames carry their loader name) */
+    private static String runtimeFrame(Throwable t) {
+        for (Throwable x = t; x != null; x = x.getCause())
+            for (StackTraceElement e : x.getStackTrace())
+                if ("pufferfish-runtime-mods".equals(e.getClassLoaderName())) return e.getClassName();
+        return null;
+    }
+
+    /** declaring class of the entrypoint if it was loaded by the runtime mod loader, else null */
+    private static String runtimeOwner(MethodHandle h) {
+        try {
+            Class<?> c = java.lang.invoke.MethodHandles.lookup().revealDirect(h).getDeclaringClass();
+            ClassLoader l = c.getClassLoader();
+            return l != null && l.getName() != null && l.getName().equals("pufferfish-runtime-mods") ? c.getName() : null;
+        } catch (Throwable e) { return null; }
     }
 }
