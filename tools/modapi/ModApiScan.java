@@ -94,7 +94,10 @@ public class ModApiScan {
             } catch (Throwable t) { missing++; }
         }
         StringBuilder j = new StringBuilder("{\n  \"reflection\": [\n");
-        boolean first = true;
+        // sun.misc.Unsafe (module jdk.unsupported, so -H:Preserve=package can't name it): mods call it from the
+        // interpreter and look up theUnsafe reflectively → register the whole type, not just the scanned members
+        j.append("    {\"type\":\"sun.misc.Unsafe\",\"allDeclaredFields\":true,\"allDeclaredMethods\":true,\"allDeclaredConstructors\":true}");
+        boolean first = false;
         for (var e : types.entrySet()) {
             j.append(first ? "" : ",\n").append("    {\"type\":\"").append(e.getKey()).append('"');
             first = false;
