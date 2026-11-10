@@ -32,8 +32,8 @@ public class ModApiScan {
             if (Files.isDirectory(p)) try (var s = Files.list(p)) { for (Path j : (Iterable<Path>) s.filter(x -> x.toString().endsWith(".jar"))::iterator) scanJar(Files.readAllBytes(j)); }
             else scanJar(Files.readAllBytes(p));
         }
-        // classes defined by the mods themselves (and their jar-in-jar libs) don't need registration
-        refs.removeIf(r -> modClasses.contains(r.owner));
+        // Owners that exist only in the scanned mods (not on the game classpath) don't need registration; they fail to
+        // resolve below. Don't drop by modClasses: Fabric API is both a scanned mod and baked into the image.
         // Registering a type makes reflective lookups on it exact: members we didn't list then throw
         // MissingReflectionRegistrationError instead of NoSuchMethodException, which breaks code that probes optional
         // methods (Fabric's Log4jLogHandler). Skip the JDK (its core packages are preserved whole) and logging libs.
