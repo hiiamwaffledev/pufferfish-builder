@@ -24,12 +24,13 @@ public class ModApiScan {
         "java/lang/ref", "java/lang/constant", "java/util", "java/util/function", "java/util/stream", "java/util/concurrent",
         "java/util/concurrent/atomic", "java/util/concurrent/locks", "java/util/regex", "java/io", "java/nio", "java/math",
         "java/text", "java/time", "sun/misc");
-    /** other JDK packages: register the members mods use, but only java.base (+ java.logging) ones that exist on iOS —
-     *  not AWT/Swing/ImageIO, java.sql, FFM, incubator modules */
+    /** other JDK packages: register the members mods use, except modules that don't exist / can't work on iOS
+     *  (desktop: AWT, Swing, ImageIO, sound, print, beans; java.sql; FFM; incubator; internal sun/jdk/com.sun) */
     static final java.util.regex.Pattern JDK = java.util.regex.Pattern.compile("(java|javax|jdk|sun|com/sun)/.*");
-    static final java.util.regex.Pattern JDK_REGISTER = java.util.regex.Pattern.compile(
-        "java/util/(zip|jar|random|spi|logging)|java/security(/.*)?|javax/crypto(/.*)?|javax/net(/.*)?|javax/security(/.*)?"
-        + "|java/time/.+|java/nio/(channels|charset|file)(/.*)?|java/net(/spi)?|java/lang/(annotation|module)");
+    static final java.util.regex.Pattern JDK_NEVER = java.util.regex.Pattern.compile(
+        "java/awt(/.*)?|javax/swing(/.*)?|javax/imageio(/.*)?|javax/sound(/.*)?|javax/print(/.*)?|java/beans(/.*)?|java/applet"
+        + "|java/sql|javax/sql(/.*)?|java/lang/foreign|jdk/.*|sun/.*|com/sun/.*|javax/accessibility|javax/naming(/.*)?"
+        + "|javax/management(/.*)?|java/lang/management|java/rmi(/.*)?|javax/script|javax/tools|javax/xml(/.*)?|org/w3c/.*|javax/lang(/.*)?|javax/annotation/processing|java/util/prefs");
     static boolean skip(String owner) {
         if (owner.startsWith("org/apache/logging/") || owner.startsWith("org/slf4j/")) return true;   // preserved whole
         int i = owner.lastIndexOf('/'); String pkg = i < 0 ? "" : owner.substring(0, i);
@@ -37,7 +38,7 @@ public class ModApiScan {
         if (owner.startsWith("com/sun/jna/platform/") && !owner.startsWith("com/sun/jna/platform/mac/")
                 && owner.indexOf('/', "com/sun/jna/platform/".length()) >= 0) return true;   // win32/unix/linux bindings: never on iOS
         if (owner.startsWith("com/sun/jna/")) return false;   // a library, not the JDK
-        return JDK.matcher(pkg).matches() && !JDK_REGISTER.matcher(pkg).matches();
+        return JDK.matcher(pkg).matches() && JDK_NEVER.matcher(pkg).matches();
     }
     static final Set<String> modClasses = new HashSet<>(), superTypes = new HashSet<>();
     /** a class only the scanned mods define (not Fabric API, which is both scanned and baked) */
