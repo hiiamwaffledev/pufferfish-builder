@@ -39,7 +39,9 @@ public class ModApiScan {
         if (owner.startsWith("com/sun/jna/")) return false;   // a library, not the JDK
         return JDK.matcher(pkg).matches() && !JDK_REGISTER.matcher(pkg).matches();
     }
-    static final Set<String> modClasses = new HashSet<>();
+    static final Set<String> modClasses = new HashSet<>(), superTypes = new HashSet<>();
+    /** a class only the scanned mods define (not Fabric API, which is both scanned and baked) */
+    static boolean modOnly(String n) { return modClasses.contains(n) && !n.startsWith("net/fabricmc/") && !n.startsWith("net/minecraft/"); }
     static int jars, classes, mixinRemapped;
     /** mixin class -> its target classes. Runtime mixins run as companions that reach @Shadow / @Accessor / @Invoker
      *  members on the real target reflectively, so refs to a mixin's own class are registered on its targets. */
@@ -93,6 +95,36 @@ public class ModApiScan {
                 ok++;
             } catch (Throwable t) { missing++; }
         }
+        // Mod classes extending/implementing game or library types inherit their methods, and AOT code (vtable/itable
+        // dispatch, Proxy, MC callbacks) or the interpreter calls them on mod objects without naming them in mod
+        // bytecode (e.g. Guava AbstractInvocationHandler.invoke). Keep every non-private method of those supertypes.
+        int inherited = 0;
+        Set<Class<?>> seenSuper = new HashSet<>();
+        for (String st : superTypes) {
+            if (skip(st) || modOnly(st)) continue;
+            Class<?> c;
+            try { c = Class.forName(st.replace('/', '.'), false, cl); } catch (Throwable t) { continue; }
+            Deque<Class<?>> q = new ArrayDeque<>(List.of(c));
+            while (!q.isEmpty()) {
+                Class<?> k = q.poll();
+                if (!seenSuper.add(k)) continue;
+                if (k.getSuperclass() != null) q.add(k.getSuperclass());
+                q.addAll(List.of(k.getInterfaces()));
+                if (skip(k.getName().replace('.', '/'))) continue;
+                try {
+                    for (Method m : k.getDeclaredMethods()) {
+                        if (Modifier.isPrivate(m.getModifiers()) || m.isSynthetic()) continue;
+                        Map<String, Object> t = types.computeIfAbsent(k.getName(), x -> new TreeMap<>());
+                        StringBuilder sb = new StringBuilder("{\"name\":\"").append(m.getName()).append("\",\"parameterTypes\":[");
+                        Class<?>[] ps = m.getParameterTypes();
+                        for (int i = 0; i < ps.length; i++) sb.append(i > 0 ? "," : "").append('"').append(ps[i].getTypeName()).append('"');
+                        @SuppressWarnings("unchecked") Set<String> ms = (Set<String>) t.computeIfAbsent("methods", x -> new TreeSet<String>());
+                        if (ms.add(sb.append("]}").toString())) inherited++;
+                    }
+                } catch (Throwable t) { /* unresolvable signature types */ }
+            }
+        }
+        System.out.printf("[modapi] %d supertypes of mod classes → %d inherited methods kept%n", seenSuper.size(), inherited);
         StringBuilder j = new StringBuilder("{\n  \"reflection\": [\n");
         // sun.misc.Unsafe (module jdk.unsupported, so -H:Preserve=package can't name it): mods call it from the
         // interpreter and look up theUnsafe reflectively → register the whole type, not just the scanned members
@@ -131,6 +163,8 @@ public class ModApiScan {
         ClassReader r;
         try { r = new ClassReader(b); } catch (Throwable t) { return; }
         modClasses.add(r.getClassName());
+        if (r.getSuperName() != null) superTypes.add(r.getSuperName());
+        superTypes.addAll(List.of(r.getInterfaces()));
         mixin(r);
         r.accept(new ClassVisitor(Opcodes.ASM9) {
             @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] ex) {
