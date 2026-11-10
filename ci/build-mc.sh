@@ -89,6 +89,10 @@ if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
     PRESERVE_ARGS+=(-H:Preserve=package=$p); done
   # runtime mixins: interpreted companion classes call these helpers directly
   [[ $INST == *-fabric-* ]] && PRESERVE_ARGS+=(-H:Preserve=package=dev.pufferfish.runtime.mixin)
+  # logging APIs every mod calls (LogManager.getLogger(), LoggerFactory.getLogger, Logger.info...). ModApiScan skips them
+  # (partial registration makes reflection on them exact), so keep the API packages whole instead.
+  for p in org.apache.logging.log4j org.apache.logging.log4j.spi org.apache.logging.log4j.message org.apache.logging.log4j.util \
+           org.slf4j org.slf4j.spi org.apache.logging.slf4j; do PRESERVE_ARGS+=(-H:Preserve=package=$p); done
   IFS=: read -ra ENTRIES <<<"$CP"
   for e in "${ENTRIES[@]}"; do
     b=$(basename "$e")
