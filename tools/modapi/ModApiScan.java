@@ -19,10 +19,26 @@ import java.util.zip.*;
 public class ModApiScan {
     record Ref(String owner, String name, String desc, boolean field) {}
     static final Set<Ref> refs = new HashSet<>();
-    static final java.util.regex.Pattern SKIP = java.util.regex.Pattern.compile(
-        // java.nio.file / nio.charset / net are not preserved whole (ios: they reach run-time-initialized Darwin JDK
-        // objects), so the members mods use there are registered individually
-        "(?!java/(nio/file|nio/charset|net)/)(java|javax|jdk|sun|com/sun|org/apache/logging|org/slf4j)/");
+    /** packages ci/build-mc.sh keeps whole (-H:Preserve=package) — nothing to register there */
+    static final Set<String> PRESERVED = Set.of("java/lang", "java/lang/invoke", "java/lang/reflect", "java/lang/runtime",
+        "java/lang/ref", "java/lang/constant", "java/util", "java/util/function", "java/util/stream", "java/util/concurrent",
+        "java/util/concurrent/atomic", "java/util/concurrent/locks", "java/util/regex", "java/io", "java/nio", "java/math",
+        "java/text", "java/time", "sun/misc");
+    /** other JDK packages: register the members mods use, but only java.base (+ java.logging) ones that exist on iOS —
+     *  not AWT/Swing/ImageIO, java.sql, FFM, incubator modules */
+    static final java.util.regex.Pattern JDK = java.util.regex.Pattern.compile("(java|javax|jdk|sun|com/sun)/.*");
+    static final java.util.regex.Pattern JDK_REGISTER = java.util.regex.Pattern.compile(
+        "java/util/(zip|jar|random|spi|logging)|java/security(/.*)?|javax/crypto(/.*)?|javax/net(/.*)?|javax/security(/.*)?"
+        + "|java/time/.+|java/nio/(channels|charset|file)(/.*)?|java/net(/spi)?|java/lang/(annotation|module)");
+    static boolean skip(String owner) {
+        if (owner.startsWith("org/apache/logging/") || owner.startsWith("org/slf4j/")) return true;   // preserved whole
+        int i = owner.lastIndexOf('/'); String pkg = i < 0 ? "" : owner.substring(0, i);
+        if (PRESERVED.contains(pkg)) return true;
+        if (owner.startsWith("com/sun/jna/platform/") && !owner.startsWith("com/sun/jna/platform/mac/")
+                && owner.indexOf('/', "com/sun/jna/platform/".length()) >= 0) return true;   // win32/unix/linux bindings: never on iOS
+        if (owner.startsWith("com/sun/jna/")) return false;   // a library, not the JDK
+        return JDK.matcher(pkg).matches() && !JDK_REGISTER.matcher(pkg).matches();
+    }
     static final Set<String> modClasses = new HashSet<>();
     static int jars, classes, mixinRemapped;
     /** mixin class -> its target classes. Runtime mixins run as companions that reach @Shadow / @Accessor / @Invoker
@@ -49,7 +65,7 @@ public class ModApiScan {
             if (ts != null) for (String t : ts) { refs.add(new Ref(t, r.name, r.desc, r.field)); mixinRemapped++; }
         }
         for (Ref r : mixinRefs) for (String t : mixinTargets.getOrDefault(r.owner, List.of())) { refs.add(new Ref(t, r.name, r.desc, r.field)); mixinRemapped++; }
-        refs.removeIf(r -> SKIP.matcher(r.owner).lookingAt());
+        refs.removeIf(r -> skip(r.owner));
         ClassLoader cl = new URLClassLoader(urls.toArray(URL[]::new), ClassLoader.getPlatformClassLoader());
         Map<String, Map<String, Object>> types = new TreeMap<>();
         int ok = 0, missing = 0;
