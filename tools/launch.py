@@ -60,7 +60,8 @@ def s(x):
   return x
 jv = list(L["jvmArgs"])
 if "-cp" in jv: i = jv.index("-cp"); del jv[i:i+2]
-cmd = [java, "-Xmx2G"] + [s(x) for x in jv] + extra + ["-cp", sub["classpath"], main] + [s(x) for x in L["gameArgs"]]
+import shlex
+cmd = [java, "-Xmx2G"] + [s(x) for x in jv] + extra + ["-cp", sub["classpath"], main] + [s(x) for x in L["gameArgs"]] + shlex.split(os.environ.get("PF_GAME_ARGS", ""))  # e.g. --quickPlaySingleplayer World
 if "--print" in a: print(json.dumps(cmd)); sys.exit()
 subprocess.run([sys.executable, str(ROOT/"tools/opts.py"), L["gameDir"]], check=True)
 os.chdir(L["gameDir"]); os.execv(cmd[0], cmd)

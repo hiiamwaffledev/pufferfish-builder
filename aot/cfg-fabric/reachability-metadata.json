@@ -7,6 +7,31 @@
       "type": "com.fasterxml.jackson.databind.ObjectMapper"
     },
     {
+      "type": "com.google.common.util.concurrent.AbstractFutureState",
+      "fields": [
+        {
+          "name": "listenersField"
+        },
+        {
+          "name": "valueField"
+        },
+        {
+          "name": "waitersField"
+        }
+      ]
+    },
+    {
+      "type": "com.google.common.util.concurrent.AbstractFutureState$Waiter",
+      "fields": [
+        {
+          "name": "next"
+        },
+        {
+          "name": "thread"
+        }
+      ]
+    },
+    {
       "type": "com.google.gson.internal.bind.JavaTimeTypeAdapters",
       "methods": [
         {
@@ -685,10 +710,73 @@
       ]
     },
     {
+      "type": "dev.pufferfish.hello.Hello",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.netty.bootstrap.ServerBootstrap$1"
+    },
+    {
+      "type": "io.netty.bootstrap.ServerBootstrap$ServerBootstrapAcceptor"
+    },
+    {
       "type": "io.netty.buffer.AbstractByteBufAllocator"
     },
     {
       "type": "io.netty.buffer.AdaptivePoolingAllocator$Magazine"
+    },
+    {
+      "type": "io.netty.buffer.AdaptivePoolingAllocator$SizeClassedChunk"
+    },
+    {
+      "type": "io.netty.channel.AbstractChannelHandlerContext"
+    },
+    {
+      "type": "io.netty.channel.ChannelOutboundBuffer"
+    },
+    {
+      "type": "io.netty.channel.DefaultChannelConfig"
+    },
+    {
+      "type": "io.netty.channel.DefaultChannelPipeline"
+    },
+    {
+      "type": "io.netty.channel.DefaultChannelPipeline$HeadContext"
+    },
+    {
+      "type": "io.netty.channel.DefaultChannelPipeline$TailContext"
+    },
+    {
+      "type": "io.netty.channel.local.LocalChannel",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.netty.channel.local.LocalServerChannel",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "io.netty.handler.flow.FlowControlHandler"
+    },
+    {
+      "type": "io.netty.util.DefaultAttributeMap"
+    },
+    {
+      "type": "io.netty.util.ReferenceCountUtil"
     },
     {
       "type": "io.netty.util.concurrent.ConcurrentSkipListIntObjMultimap"
@@ -698,6 +786,30 @@
     },
     {
       "type": "io.netty.util.concurrent.ConcurrentSkipListIntObjMultimap$Node"
+    },
+    {
+      "type": "io.netty.util.concurrent.DefaultPromise"
+    },
+    {
+      "type": "io.netty.util.concurrent.MpscIntQueue$MpscAtomicIntegerArrayQueue"
+    },
+    {
+      "type": "io.netty.util.concurrent.SingleThreadEventExecutor"
+    },
+    {
+      "type": "io.netty.util.internal.shaded.org.jctools.queues.atomic.BaseLinkedAtomicQueueConsumerNodeRef"
+    },
+    {
+      "type": "io.netty.util.internal.shaded.org.jctools.queues.atomic.BaseLinkedAtomicQueueProducerNodeRef"
+    },
+    {
+      "type": "io.netty.util.internal.shaded.org.jctools.queues.atomic.BaseMpscLinkedAtomicArrayQueueColdProducerFields"
+    },
+    {
+      "type": "io.netty.util.internal.shaded.org.jctools.queues.atomic.BaseMpscLinkedAtomicArrayQueueConsumerFields"
+    },
+    {
+      "type": "io.netty.util.internal.shaded.org.jctools.queues.atomic.BaseMpscLinkedAtomicArrayQueueProducerFields"
     },
     {
       "type": "io.netty.util.internal.shaded.org.jctools.queues.atomic.MpmcAtomicArrayQueueConsumerIndexField"
@@ -813,6 +925,14 @@
       ]
     },
     {
+      "type": "java.lang.ClassLoader",
+      "fields": [
+        {
+          "name": "classLoaderValueMap"
+        }
+      ]
+    },
+    {
       "type": "java.lang.Double",
       "jniAccessible": true,
       "fields": [
@@ -916,6 +1036,19 @@
       "methods": [
         {
           "name": "toString",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.lang.ProcessHandle",
+      "methods": [
+        {
+          "name": "current",
+          "parameterTypes": []
+        },
+        {
+          "name": "pid",
           "parameterTypes": []
         }
       ]
@@ -1482,6 +1615,12 @@
       ]
     },
     {
+      "type": "java.util.function.Predicate[][][]"
+    },
+    {
+      "type": "java.util.zip.CRC32C"
+    },
+    {
       "type": "javax.servlet.Servlet"
     },
     {
@@ -1743,10 +1882,40 @@
       "allPublicMethods": true
     },
     {
+      "type": "net.fabricmc.fabric.api.advancement.v1.AdvancementEvents$Loaded[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.advancement.v1.AdvancementEvents$Modify[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.advancement.v1.AdvancementEvents$Replace[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.block.v1.FluidFlowEvents$Allow[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientBlockEntityEvents$Load[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientBlockEntityEvents$Unload[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents$Load[]"
     },
     {
       "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents$Unload[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents$Load[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents$Unload[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLevelEvents$AfterClientLevelChange[]"
     },
     {
       "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents$ClientStarted[]"
@@ -1765,6 +1934,9 @@
     },
     {
       "type": "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents$StartTick[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.item.v1.ItemTooltipCallback[]"
     },
     {
       "type": "net.fabricmc.fabric.api.client.model.loading.v1.ModelModifier$AfterBakeBlock[]"
@@ -1800,6 +1972,15 @@
       "type": "net.fabricmc.fabric.api.client.networking.v1.ClientConfigurationConnectionEvents$Start[]"
     },
     {
+      "type": "net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents$Disconnect[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents$Init[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents$QueryStart[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents$Disconnect[]"
     },
     {
@@ -1809,10 +1990,55 @@
       "type": "net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents$Join[]"
     },
     {
+      "type": "net.fabricmc.fabric.api.client.networking.v1.ServerboundConfigurationChannelEvents$Register[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.networking.v1.ServerboundConfigurationChannelEvents$Unregister[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.client.rendering.v1.BuiltInBlockModelsCallback[]"
     },
     {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.InvalidateRenderStateCallback[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.client.rendering.v1.LivingEntityRenderLayerRegistrationCallback[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents$AfterBlockOutlineExtraction[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents$EndExtraction[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$AfterOpaqueTerrain[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$AfterSolidFeatures[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$AfterTranslucentFeatures[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$AfterTranslucentTerrain[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$BeforeBlockOutline[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$BeforeGizmos[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$BeforeTranslucentTerrain[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$CollectSubmits[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$EndMain[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents$StartMain[]"
     },
     {
       "type": "net.fabricmc.fabric.api.client.screen.v1.ScreenEvents$AfterBackground[]"
@@ -1905,6 +2131,12 @@
       "type": "net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents$BeforeMouseScroll[]"
     },
     {
+      "type": "net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.dimension.v1.DimensionEvents$ModifyAttributes[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.entity.event.v1.ServerEntityLevelChangeEvents$AfterEntityChange[]"
     },
     {
@@ -1944,6 +2176,12 @@
       "type": "net.fabricmc.fabric.api.event.lifecycle.v1.CommonLifecycleEvents$TagsLoaded[]"
     },
     {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerBlockEntityEvents$Load[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerBlockEntityEvents$Unload[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents$FullChunkStatusChange[]"
     },
     {
@@ -1954,6 +2192,18 @@
     },
     {
       "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents$Unload[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents$AllowLoad[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents$EquipmentChange[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents$Load[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents$Unload[]"
     },
     {
       "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerLevelEvents$Load[]"
@@ -1989,6 +2239,18 @@
       "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents$SyncDataPackContents[]"
     },
     {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents$EndLevelTick[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents$EndTick[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents$StartLevelTick[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents$StartTick[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.event.player.AttackBlockCallback[]"
     },
     {
@@ -2001,10 +2263,70 @@
       "type": "net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents$Canceled[]"
     },
     {
+      "type": "net.fabricmc.fabric.api.event.registry.DynamicRegistrySetupCallback[]"
+    },
+    {
       "type": "net.fabricmc.fabric.api.event.registry.RegistryEntryAddedCallback[]"
     },
     {
       "type": "net.fabricmc.fabric.api.event.registry.RegistryIdRemapCallback[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.item.v1.BlockTransformerEvents$Modify[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.item.v1.DefaultItemComponentEvents$ModifyCallback[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.item.v1.EnchantmentEvents$AllowEnchanting[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.item.v1.EnchantmentEvents$ModifyWithLookup[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.item.v1.EnchantmentEvents$Modify[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.loot.v3.LootTableEvents$Loaded[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.loot.v3.LootTableEvents$ModifyDrops[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.loot.v3.LootTableEvents$Modify[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.loot.v3.LootTableEvents$Replace[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.message.v1.ServerMessageEvents$AllowChatMessage[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.message.v1.ServerMessageEvents$AllowCommandMessage[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.message.v1.ServerMessageEvents$AllowGameMessage[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.message.v1.ServerMessageEvents$ChatMessage[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.message.v1.ServerMessageEvents$CommandMessage[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.message.v1.ServerMessageEvents$GameMessage[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ClientboundConfigurationChannelEvents$Register[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ClientboundConfigurationChannelEvents$Unregister[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ClientboundPlayChannelEvents$Register[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ClientboundPlayChannelEvents$Unregister[]"
     },
     {
       "type": "net.fabricmc.fabric.api.networking.v1.EntityTrackingEvents$StartTracking[]"
@@ -2017,6 +2339,24 @@
     },
     {
       "type": "net.fabricmc.fabric.api.networking.v1.ServerConfigurationConnectionEvents$Disconnect[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ServerLoginConnectionEvents$Disconnect[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ServerLoginConnectionEvents$Init[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ServerLoginConnectionEvents$QueryStart[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents$Disconnect[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents$Init[]"
+    },
+    {
+      "type": "net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents$Join[]"
     },
     {
       "type": "net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry$ModifyDefaultAttribute[]"
@@ -2193,6 +2533,12 @@
       ]
     },
     {
+      "type": "net.fabricmc.fabric.impl.networking.splitter.FabricPacketMerger"
+    },
+    {
+      "type": "net.fabricmc.fabric.impl.networking.splitter.FabricPacketSplitter"
+    },
+    {
       "type": "net.fabricmc.fabric.impl.particle.ExtendedBlockParticleOptionSync",
       "methods": [
         {
@@ -2307,6 +2653,42 @@
     },
     {
       "type": "net.minecraft.client.renderer.item.ItemStackRenderState$FoilType[]"
+    },
+    {
+      "type": "net.minecraft.network.Connection"
+    },
+    {
+      "type": "net.minecraft.network.Connection$2"
+    },
+    {
+      "type": "net.minecraft.network.Connection$3"
+    },
+    {
+      "type": "net.minecraft.network.LocalFrameDecoder"
+    },
+    {
+      "type": "net.minecraft.network.LocalFrameEncoder"
+    },
+    {
+      "type": "net.minecraft.network.PacketBundlePacker"
+    },
+    {
+      "type": "net.minecraft.network.PacketBundleUnpacker"
+    },
+    {
+      "type": "net.minecraft.network.PacketDecoder"
+    },
+    {
+      "type": "net.minecraft.network.PacketEncoder"
+    },
+    {
+      "type": "net.minecraft.network.UnconfiguredPipelineHandler$Inbound"
+    },
+    {
+      "type": "net.minecraft.network.UnconfiguredPipelineHandler$Outbound"
+    },
+    {
+      "type": "net.minecraft.server.network.ServerConnectionListener$2"
     },
     {
       "type": "net.minecraft.util.random.Weighted[]"
@@ -3713,6 +4095,15 @@
       ]
     },
     {
+      "type": "org.lwjgl.openal.SOFTSystemEventProcI$invoke/0x000000000d060400",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "org.lwjgl.openal.SOFTSystemEventProcI$invoke/0x00000000190c0000",
       "methods": [
         {
@@ -3736,6 +4127,15 @@
       ]
     },
     {
+      "type": "org.lwjgl.sdl.SDL_LogOutputFunctionI$invoke/0x000000000cf84c00",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "org.lwjgl.sdl.SDL_LogOutputFunctionI$invoke/0x0000000019025400",
       "methods": [
         {
@@ -3746,6 +4146,15 @@
     },
     {
       "type": "org.lwjgl.system.JNI$JNIBindings"
+    },
+    {
+      "type": "org.lwjgl.system.JNIBindingsImpl/0x000000000c254000",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
     },
     {
       "type": "org.lwjgl.system.JNIBindingsImpl/0x0000000018280000",
@@ -3860,6 +4269,15 @@
       ]
     },
     {
+      "type": "org.lwjgl.util.shaderc.ShadercIncludeResolveI$invoke/0x000000000d137800",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
       "type": "org.lwjgl.util.shaderc.ShadercIncludeResolveI$invoke/0x000000001919a800",
       "methods": [
         {
@@ -3877,6 +4295,15 @@
             "long",
             "long"
           ]
+        }
+      ]
+    },
+    {
+      "type": "org.lwjgl.util.shaderc.ShadercIncludeResultReleaseI$invoke/0x000000000d01c800",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
         }
       ]
     },
@@ -3900,6 +4327,15 @@
             "long",
             "long"
           ]
+        }
+      ]
+    },
+    {
+      "type": "org.lwjgl.vulkan.VkDebugUtilsMessengerCallbackEXTI$invoke/0x000000000cfb1400",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
         }
       ]
     },
@@ -4365,6 +4801,15 @@
     },
     {
       "type": "sun.security.rsa.RSAKeyFactory$Legacy",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "sun.security.rsa.RSAKeyPairGenerator$Legacy",
       "methods": [
         {
           "name": "<init>",
@@ -4843,6 +5288,9 @@
       "glob": "log4j2.properties"
     },
     {
+      "glob": "log4j2.simplelog.properties"
+    },
+    {
       "glob": "log4j2.system.properties"
     },
     {
@@ -4909,6 +5357,9 @@
       "glob": "oshi.properties"
     },
     {
+      "glob": "pufferfish-baked-mods.txt"
+    },
+    {
       "glob": "realmsVersion"
     },
     {
@@ -4925,6 +5376,10 @@
     {
       "module": "java.base",
       "glob": "sun/net/idn/uidna.spp"
+    },
+    {
+      "module": "jdk.jfr",
+      "glob": "jdk/jfr/internal/types/metadata.bin"
     }
   ],
   "foreign": {
@@ -5056,6 +5511,16 @@
       {
         "returnType": "void",
         "parameterTypes": [
+          "jint",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "jlong",
+          "jlong",
+          "jlong",
           "jint",
           "jint"
         ]
@@ -5330,6 +5795,14 @@
         "parameterTypes": [
           "jlong",
           "jlong"
+        ]
+      },
+      {
+        "returnType": "void",
+        "parameterTypes": [
+          "jlong",
+          "jfloat",
+          "jfloat"
         ]
       },
       {
