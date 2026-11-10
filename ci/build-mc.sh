@@ -15,7 +15,8 @@ source ci/log.sh
 INST=${1:?instance} MODE=${2:?mode} TARGET=${PF_TARGET:-ios}
 FABRIC=; [[ $INST == *-fabric-* ]] && FABRIC=1
 case $MODE in vanilla) SUF=;; crema) SUF=-crema;; crema-jit) SUF=-crema-jit;; *) die "unknown mode $MODE";; esac
-NAME=minecraft${FABRIC:+-fabric}$SUF$([[ $TARGET == linux ]] && echo -linux)
+LSUF=; [[ $TARGET == linux ]] && LSUF=-linux
+NAME=minecraft${FABRIC:+-fabric}$SUF$LSUF
 ANALYSIS=${PF_ANALYSIS:-pointsto}
 [[ $MODE == crema* && $ANALYSIS == rta ]] && die "crema needs PF_ANALYSIS=pointsto (RTA leaves virtual calls in pre-isolate code → SIGSEGV at launch; Ristretto needs points-to anyway)"
 CFG=$PWD/aot/$([[ $FABRIC ]] && echo cfg-fabric || echo cfg-vanilla)
@@ -94,6 +95,7 @@ if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
 fi
 tr ':' '\n' <<<"$CP" | sed 's|^'"$PWD"'/||' > "$L/classpath.txt"
 
+MODAPI_CFG=; [[ $MODE == crema* && -f aot/cfg-modapi/reachability-metadata.json ]] && MODAPI_CFG=,$PWD/aot/cfg-modapi
 OUT=$PWD/out/$NAME; rm -rf "$OUT"; mkdir -p "$OUT/tmp"
 ARGS=(
   -J-Xmx${PF_HEAP:-12g} -J-XX:+UseCompactObjectHeaders "${GC_ARGS[@]}"
@@ -102,7 +104,7 @@ ARGS=(
   --parallelism=${PF_PAR:-4} -H:+UnlockExperimentalVMOptions -H:-ForeignAPISupport "${TARGET_ARGS[@]}"
   -H:TempDirectory=$OUT/tmp -cp "$CP$EXTRA_CP" -o "$OUT/$NAME"
   -O${PF_OPT:-2} -H:MaxSurvivorSpaces=3 "${AN_ARGS[@]}" -H:+ReportExceptionStackTraces
-  "-H:ConfigurationFileDirectories=$CFG$([[ $MODE == crema* && -f aot/cfg-modapi/reachability-metadata.json ]] && echo ,$PWD/aot/cfg-modapi)" --exclude-config '.*netty.*\.jar' 'META-INF/native-image/.*'
+  "-H:ConfigurationFileDirectories=$CFG$MODAPI_CFG" --exclude-config '.*netty.*\.jar' 'META-INF/native-image/.*'
   --enable-native-access=ALL-UNNAMED --add-exports=java.base/jdk.internal.misc=ALL-UNNAMED "${FLAT_ARGS[@]}"
   -H:BuildOutputJSONFile=$L/build-output.json "${MODE_ARGS[@]}" "${PRESERVE_ARGS[@]}" ${PF_EXTRA:-} "$MAIN"
 )
