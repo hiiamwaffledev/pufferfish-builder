@@ -202,19 +202,19 @@ public final class RuntimeMixins {
 
     /** Called by the runtime mod class loader for every class it defines. */
     public static byte[] transform(String internal, byte[] b) {
-        if (mixins.isEmpty() && dispatchItf.isEmpty()) return b;
         ClassNode cn = node(b);
         MixinInfo mi = mixins.get(internal);
         if (mi != null) companion(cn, mi);
         boolean changed = mi != null;
         for (MethodNode m : cn.methods) changed |= rewriteCalls(m, mi);
         changed |= erase(cn, mi);
+        for (MethodNode m : cn.methods) changed |= unavailable(m);
         if (!changed) return b;
         ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
             @Override protected String getCommonSuperClass(String x, String y) {
                 try { return super.getCommonSuperClass(x, y); } catch (Throwable t) { return "java/lang/Object"; }
             }
-            @Override protected ClassLoader getClassLoader() { return loader; }
+            @Override protected ClassLoader getClassLoader() { return loader != null ? loader : RuntimeMixins.class.getClassLoader(); }
         };
         cn.accept(w);
         return w.toByteArray();
@@ -358,6 +358,32 @@ public final class RuntimeMixins {
         }
         if (mi != null && m.name.equals("pf$init")) changed = true;
         return changed;
+    }
+
+    // ---- JDK parts that don't exist on iOS -------------------------------------------------------------------------
+    // The image never contains AWT/Swing/ImageIO/sound/print/beans/sql/RMI/scripting/compiler APIs, and an interpreted
+    // call to a method the image lacks is a fatal VM error. Such calls in runtime mods throw instead, so mods that probe
+    // optional features (clipboard images, update dialogs, ...) and catch the failure keep working. Same on the desktop
+    // AOT build, so PC tests match the phone.
+    static final java.util.regex.Pattern UNAVAILABLE = java.util.regex.Pattern.compile(
+        "(java/awt|javax/swing|javax/imageio|javax/sound|javax/print|java/beans|java/applet|java/sql|javax/sql|java/rmi"
+        + "|javax/script|javax/tools|javax/naming|javax/lang|javax/annotation/processing|java/util/prefs|java/lang/foreign)/.*");
+
+    private static boolean unavailable(MethodNode m) {
+        boolean ch = false;
+        for (AbstractInsnNode n : m.instructions.toArray()) {
+            String owner = n instanceof MethodInsnNode c ? c.owner : n instanceof FieldInsnNode f ? f.owner : null;
+            if (owner == null || !UNAVAILABLE.matcher(owner).matches()) continue;
+            String what = owner.replace('/', '.') + "." + (n instanceof MethodInsnNode c ? c.name : ((FieldInsnNode) n).name);
+            InsnList t = new InsnList();
+            t.add(new TypeInsnNode(Opcodes.NEW, "java/lang/UnsupportedOperationException")); t.add(new InsnNode(Opcodes.DUP));
+            t.add(new LdcInsnNode("[pufferfish] " + what + " is not available on this platform"));
+            t.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, "java/lang/UnsupportedOperationException", "<init>", "(Ljava/lang/String;)V", false));
+            t.add(new InsnNode(Opcodes.ATHROW));
+            replace(m, n, t);
+            ch = true;
+        }
+        return ch;
     }
 
     // ---- type erasure ---------------------------------------------------------------------------------------------

@@ -30,7 +30,7 @@ public class ModApiScan {
     static final java.util.regex.Pattern JDK_NEVER = java.util.regex.Pattern.compile(
         "java/awt(/.*)?|javax/swing(/.*)?|javax/imageio(/.*)?|javax/sound(/.*)?|javax/print(/.*)?|java/beans(/.*)?|java/applet"
         + "|java/sql|javax/sql(/.*)?|java/lang/foreign|jdk/.*|sun/.*|com/sun/.*|javax/accessibility|javax/naming(/.*)?"
-        + "|javax/management(/.*)?|java/lang/management|java/rmi(/.*)?|javax/script|javax/tools|javax/xml(/.*)?|org/w3c/.*|javax/lang(/.*)?|javax/annotation/processing|java/util/prefs");
+        + "|java/rmi(/.*)?|javax/script|javax/tools|javax/xml(/.*)?|org/w3c/.*|javax/lang(/.*)?|javax/annotation/processing|java/util/prefs");
     static boolean skip(String owner) {
         if (owner.startsWith("org/apache/logging/") || owner.startsWith("org/slf4j/")) return true;   // preserved whole
         int i = owner.lastIndexOf('/'); String pkg = i < 0 ? "" : owner.substring(0, i);
