@@ -19,7 +19,8 @@ LSUF=; [[ $TARGET == linux ]] && LSUF=-linux
 NAME=minecraft${FABRIC:+-fabric}$SUF$LSUF
 ANALYSIS=${PF_ANALYSIS:-pointsto}
 [[ $MODE == crema* && $ANALYSIS == rta ]] && die "crema needs PF_ANALYSIS=pointsto (RTA leaves virtual calls in pre-isolate code → SIGSEGV at launch; Ristretto needs points-to anyway)"
-CFG=$PWD/aot/$([[ $FABRIC ]] && echo cfg-fabric || echo cfg-vanilla)
+# Fabric: vanilla config (traced through world load: netty LocalServerChannel etc.) + Fabric-specific config
+CFG=$PWD/aot/cfg-vanilla; [[ $FABRIC ]] && CFG+=,$PWD/aot/cfg-fabric
 L=$PWD/logs; mkdir -p "$L"
 ASMD=mc/libraries/org/ow2/asm
 ASM=$(ls $ASMD/asm/*/asm-*.jar | head -1):$(ls $ASMD/asm-commons/*/asm-commons-*.jar | head -1)
