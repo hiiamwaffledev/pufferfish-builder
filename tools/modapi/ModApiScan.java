@@ -20,7 +20,9 @@ public class ModApiScan {
     record Ref(String owner, String name, String desc, boolean field) {}
     static final Set<Ref> refs = new HashSet<>();
     static final java.util.regex.Pattern SKIP = java.util.regex.Pattern.compile(
-        "(java|javax|jdk|sun|com/sun|org/apache/logging|org/slf4j)/");
+        // java.nio.file / nio.charset / net are not preserved whole (ios: they reach run-time-initialized Darwin JDK
+        // objects), so the members mods use there are registered individually
+        "(?!java/(nio/file|nio/charset|net)/)(java|javax|jdk|sun|com/sun|org/apache/logging|org/slf4j)/");
     static final Set<String> modClasses = new HashSet<>();
     static int jars, classes, mixinRemapped;
     /** mixin class -> its target classes. Runtime mixins run as companions that reach @Shadow / @Accessor / @Invoker

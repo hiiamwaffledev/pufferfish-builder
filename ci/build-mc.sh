@@ -84,8 +84,9 @@ if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
            java.util.stream java.util.concurrent java.util.concurrent.atomic java.util.concurrent.locks java.util.regex java.io \
            java.nio java.nio.file java.nio.charset java.math java.text java.time java.net; do
     # ios: these reach JDK objects whose types the Darwin cross build initializes at run time
-    # (Charset.standardProvider → sun.nio.cs.StandardCharsets, FileSystems holder, DefaultInterface)
-    [[ $TARGET == ios && $p =~ ^java\.(nio\.charset|nio\.file|net)$ ]] && continue
+    # (Charset.standardProvider → sun.nio.cs.StandardCharsets, FileSystems holder, DefaultInterface); ModApiScan registers
+    # the members mods use instead. Skipped on linux too, so desktop AOT tests match the phone.
+    [[ $p =~ ^java\.(nio\.charset|nio\.file|net)$ ]] && continue
     PRESERVE_ARGS+=(-H:Preserve=package=$p); done
   # runtime mixins: interpreted companion classes call these helpers directly
   [[ $INST == *-fabric-* ]] && PRESERVE_ARGS+=(-H:Preserve=package=dev.pufferfish.runtime.mixin)
