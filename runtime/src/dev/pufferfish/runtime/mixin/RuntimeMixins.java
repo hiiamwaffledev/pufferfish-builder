@@ -321,33 +321,39 @@ public final class RuntimeMixins {
     }
 
     /** Rewrites member accesses in a method. mi != null → this is a companion (mixin) method. */
+    /** Rewrites member accesses in a method. mi != null → this is a companion (mixin) method. Accesses to ANY mixin's
+     *  members are rewritten, also from its inner/anonymous classes (MixinPlayer$1 calling MixinPlayer.this.x()). */
     private static boolean rewriteCalls(MethodNode m, MixinInfo mi) {
         boolean changed = false;
         for (AbstractInsnNode n : m.instructions.toArray()) {
-            if (n instanceof FieldInsnNode f && mi != null && f.owner.equals(mi.name)) {
+            if (n instanceof FieldInsnNode f && mixins.containsKey(f.owner)) {
+                MixinInfo fm = mixins.get(f.owner);
                 boolean stat = f.getOpcode() == Opcodes.GETSTATIC || f.getOpcode() == Opcodes.PUTSTATIC;
-                if (mi.shadowFields.contains(f.name)) { replace(m, f, shadowField(f, stat ? mi.target : selfOwner(mi), stat)); changed = true; }
-                else if (!stat && mi.addedFields.containsKey(f.name)) { replace(m, f, addedField(f, mi)); changed = true; }
-                else if (!mi.declaredFields.contains(f.name)) { replace(m, f, shadowField(f, stat ? mi.target : selfOwner(mi), stat)); changed = true; } // inherited from the mixin's superclass
+                if (fm.shadowFields.contains(f.name)) { replace(m, f, shadowField(f, stat ? fm.target : selfOwner(fm), stat)); changed = true; }
+                else if (!stat && fm.addedFields.containsKey(f.name)) { replace(m, f, addedField(f, fm)); changed = true; }
+                else if (!fm.declaredFields.contains(f.name)) { replace(m, f, shadowField(f, stat ? fm.target : selfOwner(fm), stat)); changed = true; } // inherited from the mixin's superclass
             } else if (n instanceof MethodInsnNode c) {
-                MixinInfo own = mi != null && c.owner.equals(mi.name) ? mi : null;
+                MixinInfo own = mixins.get(c.owner);
+                boolean done = false;
                 if (own != null && c.getOpcode() != Opcodes.INVOKESTATIC && !c.name.equals("<init>")) {
-                    if (own.shadowMethods.contains(c.name + c.desc)) { replace(m, c, shadowCall(c, selfOwner(own))); changed = true; }
+                    if (own.shadowMethods.contains(c.name + c.desc)) { replace(m, c, shadowCall(c, selfOwner(own))); done = true; }
                     else if (own.ownMethods.contains(c.name + c.desc)) {
                         m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, own.name, c.name, "(L" + companionSelf(own) + ";" + c.desc.substring(1), own.itf));
-                        changed = true;
+                        done = true;
                     } else if (!own.declaredMethods.contains(c.name + c.desc) && !own.itf) {
-                        replace(m, c, shadowCall(c, selfOwner(own))); changed = true;   // inherited from the mixin's superclass
+                        replace(m, c, shadowCall(c, selfOwner(own))); done = true;   // inherited from the mixin's superclass
                     }
                 } else if (own != null && c.getOpcode() == Opcodes.INVOKESTATIC && !own.declaredMethods.contains(c.name + c.desc) && !own.itf) {
-                    m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, own.target, c.name, c.desc, false)); changed = true;
+                    m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, own.target, c.name, c.desc, false)); done = true;
                 } else if (mi != null && c.getOpcode() == Opcodes.INVOKESPECIAL && !c.name.equals("<init>") && !c.owner.equals(mi.name)) {
                     // super.foo() from a mixin extending the target's superclass: best effort, virtual call
-                    m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKEVIRTUAL, c.owner, c.name, c.desc, false)); changed = true;
-                } else if (dispatchItf.containsKey(c.owner) && c.getOpcode() == Opcodes.INVOKEINTERFACE) {
-                    m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, DISPATCH_PKG + c.owner, c.name, "(Ljava/lang/Object;" + c.desc.substring(1), false));
-                    changed = true;
+                    m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKEVIRTUAL, c.owner, c.name, c.desc, false)); done = true;
                 }
+                if (!done && dispatchItf.containsKey(c.owner) && c.getOpcode() == Opcodes.INVOKEINTERFACE) {
+                    m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, DISPATCH_PKG + c.owner, c.name, "(Ljava/lang/Object;" + c.desc.substring(1), false));
+                    done = true;
+                }
+                changed |= done;
             } else if (n instanceof TypeInsnNode t && dispatchItf.containsKey(t.desc)) {
                 if (t.getOpcode() == Opcodes.CHECKCAST) { m.instructions.remove(t); changed = true; }
                 else if (t.getOpcode() == Opcodes.INSTANCEOF) {
@@ -372,6 +378,11 @@ public final class RuntimeMixins {
     private static boolean unavailable(MethodNode m) {
         boolean ch = false;
         for (AbstractInsnNode n : m.instructions.toArray()) {
+            // java.lang.reflect.Proxy → PfProxy (Crema can't dispatch on JDK proxies of runtime-loaded interfaces)
+            if (n instanceof MethodInsnNode c && c.owner.equals("java/lang/reflect/Proxy")
+                    && (c.name.equals("newProxyInstance") || c.name.equals("isProxyClass") || c.name.equals("getInvocationHandler"))) {
+                c.owner = "dev/pufferfish/runtime/mixin/PfProxy"; ch = true; continue;
+            }
             String owner = n instanceof MethodInsnNode c ? c.owner : n instanceof FieldInsnNode f ? f.owner : null;
             if (owner == null || !UNAVAILABLE.matcher(owner).matches()) continue;
             String what = owner.replace('/', '.') + "." + (n instanceof MethodInsnNode c ? c.name : ((FieldInsnNode) n).name);
@@ -384,6 +395,54 @@ public final class RuntimeMixins {
             ch = true;
         }
         return ch;
+    }
+
+    // ---- generated classes (proxies) -------------------------------------------------------------------------------
+    private static final Map<String, byte[]> generated = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicInteger proxyN = new java.util.concurrent.atomic.AtomicInteger();
+    /** bytes for a class the runtime mod loader is asked for (pf/proxy/...), once */
+    public static byte[] generated(String internal) { return generated.remove(internal); }
+
+    /** pf/proxy/$ProxyN extends PfProxy.Base implements itfs: each method → pf$h.invoke(this, pf$m[i], args) */
+    static java.lang.reflect.Constructor<?> proxyClass(Class<?>[] itfs) {
+        String name = "pf/proxy/$Proxy" + proxyN.incrementAndGet(), base = "dev/pufferfish/runtime/mixin/PfProxy$Base";
+        List<Method> ms = PfProxy.methods(itfs);
+        ClassNode cn = new ClassNode();
+        cn.version = Opcodes.V21; cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SUPER; cn.name = name; cn.superName = base;
+        for (Class<?> i : itfs) cn.interfaces.add(Type.getInternalName(i));
+        cn.fields.add(new FieldNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "pf$m", "[Ljava/lang/reflect/Method;", null, null));
+        MethodNode init = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "(Ljava/lang/reflect/InvocationHandler;)V", null, null);
+        init.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0)); init.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        init.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, base, "<init>", "(Ljava/lang/reflect/InvocationHandler;)V", false));
+        init.instructions.add(new InsnNode(Opcodes.RETURN));
+        cn.methods.add(init);
+        for (int i = 0; i < ms.size(); i++) {
+            Method x = ms.get(i);
+            String desc = Type.getMethodDescriptor(x);
+            MethodNode m = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL, x.getName(), desc, null, null);
+            InsnList c = m.instructions;
+            c.add(new VarInsnNode(Opcodes.ALOAD, 0)); c.add(new FieldInsnNode(Opcodes.GETFIELD, base, "pf$h", "Ljava/lang/reflect/InvocationHandler;"));
+            c.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            c.add(new FieldInsnNode(Opcodes.GETSTATIC, name, "pf$m", "[Ljava/lang/reflect/Method;")); c.add(ldcInt(i)); c.add(new InsnNode(Opcodes.AALOAD));
+            Type[] args = Type.getArgumentTypes(desc);
+            if (args.length == 0) c.add(new InsnNode(Opcodes.ACONST_NULL)); else c.add(argArray(args, 1));
+            c.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, "java/lang/reflect/InvocationHandler", "invoke",
+                    "(Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;)Ljava/lang/Object;", true));
+            Type ret = Type.getReturnType(desc);
+            if (ret.getSort() == Type.VOID) { c.add(new InsnNode(Opcodes.POP)); c.add(new InsnNode(Opcodes.RETURN)); }
+            else { unbox(c, ret); c.add(new InsnNode(ret.getOpcode(Opcodes.IRETURN))); }
+            cn.methods.add(m);
+        }
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
+            @Override protected String getCommonSuperClass(String x, String y) { return "java/lang/Object"; }
+        };
+        cn.accept(w);
+        generated.put(name, w.toByteArray());
+        try {
+            Class<?> k = Class.forName(name.replace('/', '.'), true, loader);
+            k.getField("pf$m").set(null, ms.toArray(new Method[0]));
+            return k.getConstructor(java.lang.reflect.InvocationHandler.class);
+        } catch (ReflectiveOperationException e) { throw new IllegalStateException(e); }
     }
 
     // ---- type erasure ---------------------------------------------------------------------------------------------
@@ -410,13 +469,14 @@ public final class RuntimeMixins {
         return b.toString();
     }
     private static String eraseName(String n, MixinInfo mi) {
-        if (mi != null && n.equals(mi.name)) return companionSelf(mi);
-        return dispatchItf.containsKey(n) ? "java/lang/Object" : n;
+        if (dispatchItf.containsKey(n)) return "java/lang/Object";
+        MixinInfo x = mixins.get(n);
+        return x != null ? companionSelf(x) : n;   // a mixin type anywhere (incl. its inner classes' this$0) = its target
     }
     private static boolean mentionsErased(String d, MixinInfo mi) { return d != null && !eraseDesc(d, mi).equals(d); }
 
     private static boolean erase(ClassNode cn, MixinInfo mi) {
-        if (dispatchItf.isEmpty() && mi == null) return false;
+        if (dispatchItf.isEmpty() && mixins.isEmpty()) return false;
         boolean ch = false;
         for (FieldNode f : cn.fields) if (mentionsErased(f.desc, mi)) { f.desc = eraseDesc(f.desc, mi); f.signature = null; ch = true; }
         for (MethodNode m : cn.methods) {
@@ -429,7 +489,7 @@ public final class RuntimeMixins {
                     if (mentionsErased(f.desc, mi)) { f.desc = eraseDesc(f.desc, mi); ch = true; }
                 } else if (n instanceof TypeInsnNode t) {
                     String nd = t.desc.startsWith("[") ? eraseDesc(t.desc, mi)
-                            : (t.getOpcode() == Opcodes.ANEWARRAY || (mi != null && t.desc.equals(mi.name))) ? eraseName(t.desc, mi) : t.desc;
+                            : (t.getOpcode() == Opcodes.ANEWARRAY || (mixins.containsKey(t.desc) && t.getOpcode() != Opcodes.NEW)) ? eraseName(t.desc, mi) : t.desc;
                     if (!nd.equals(t.desc)) { t.desc = nd; ch = true; }
                 } else if (n instanceof MultiANewArrayInsnNode a) {
                     if (mentionsErased(a.desc, mi)) { a.desc = eraseDesc(a.desc, mi); ch = true; }
@@ -451,7 +511,7 @@ public final class RuntimeMixins {
     }
 
     private static Handle eraseHandle(Handle h, MixinInfo mi) {
-        MixinInfo own = mi != null && h.getOwner().equals(mi.name) ? mi : null;
+        MixinInfo own = mixins.get(h.getOwner());
         int tag = h.getTag();
         if (own != null && (tag == Opcodes.H_INVOKEVIRTUAL || tag == Opcodes.H_INVOKESPECIAL || tag == Opcodes.H_INVOKEINTERFACE)
                 && own.ownMethods.contains(h.getName() + h.getDesc()))

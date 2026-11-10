@@ -39,6 +39,10 @@ public final class FlatMain extends FabricLauncherBase {
         /** Every runtime mod class goes through RuntimeMixins (mixin companions, added-interface/accessor call sites). */
         @Override protected Class<?> findClass(String name) throws ClassNotFoundException {
             String internal = name.replace('.', '/');
+            if (internal.startsWith("pf/proxy/")) {
+                byte[] d = dev.pufferfish.runtime.mixin.RuntimeMixins.generated(internal);
+                if (d != null) return defineClass(name, d, 0, d.length);
+            }
             if (internal.startsWith("pf/dispatch/")) {
                 byte[] d = dev.pufferfish.runtime.mixin.RuntimeMixins.dispatcher(internal.substring("pf/dispatch/".length()));
                 if (d != null) return defineClass(name, d, 0, d.length);
