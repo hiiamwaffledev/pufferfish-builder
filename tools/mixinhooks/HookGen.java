@@ -159,7 +159,7 @@ public class HookGen {
     static final String WRAP_OPERATION = MX + "wrapoperation/WrapOperation;", WRAP_METHOD = MX + "wrapmethod/WrapMethod;";
     static final String OVERWRITE = "Lorg/spongepowered/asm/mixin/Overwrite;";
 
-    enum Def { NONE, ARG, TRUE, OP }
+    enum Def { NONE, ARG, TRUE, OP, INSTANCEOF }
 
     static final class Spec {
         String kind, skip;                 // skip != null: not supported, reason
@@ -194,6 +194,9 @@ public class HookGen {
             case "Inject", "ModifyArgs" -> { if (ret.getSort() != Type.VOID) return Spec.no(k, "non-void " + k); }
             case "ModifyVariable", "ModifyConstant", "ModifyExpressionValue", "ModifyReceiver", "ModifyReturnValue" -> {
                 if (ps.length == 0 || ret.getSort() == Type.VOID) return Spec.no(k, "odd " + k + " shape");
+                // @ModifyConstant on an instanceof class constant: (Object, Class) -> boolean replaces the instanceof itself
+                if (k.equals("ModifyConstant") && ret.getSort() == Type.BOOLEAN && ps.length >= 2
+                        && ps[0].getDescriptor().equals("Ljava/lang/Object;") && ps[1].getDescriptor().equals("Ljava/lang/Class;")) { s.def = Def.INSTANCEOF; break; }
                 s.def = Def.ARG; s.defArg = 0;
             }
             case "ModifyArg" -> {
@@ -240,7 +243,14 @@ public class HookGen {
             }
             default -> { return Spec.no(k, "kind " + k); }
         }
+        if (s.def == Def.ARG && !returnable(ps[s.defArg], ret)) return Spec.no(k, "default value type mismatch");
         return s;
+    }
+
+    /** can the stand-in return parameter type t as ret unchanged (same primitive, or reference + checkcast) */
+    static boolean returnable(Type t, Type ret) {
+        boolean tr = t.getSort() >= Type.ARRAY, rr = ret.getSort() >= Type.ARRAY;
+        return tr && rr || !tr && !rr && t.getSort() == ret.getSort();
     }
 
     static String withOperation(String desc) {
@@ -346,6 +356,11 @@ public class HookGen {
         switch (sp.def) {
             case NONE -> { if (ret.getSort() != Type.VOID) throw new IllegalStateException("no default for " + sp.kind); c.add(new InsnNode(Opcodes.RETURN)); }
             case TRUE -> { c.add(new InsnNode(Opcodes.ICONST_1)); c.add(new InsnNode(Opcodes.IRETURN)); }
+            case INSTANCEOF -> {   // cls.isInstance(obj)
+                c.add(new VarInsnNode(Opcodes.ALOAD, slot[1])); c.add(new VarInsnNode(Opcodes.ALOAD, slot[0]));
+                c.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "isInstance", "(Ljava/lang/Object;)Z", false));
+                c.add(new InsnNode(Opcodes.IRETURN));
+            }
             case ARG -> {
                 Type t = args[sp.defArg];
                 c.add(new VarInsnNode(t.getOpcode(Opcodes.ILOAD), slot[sp.defArg]));
