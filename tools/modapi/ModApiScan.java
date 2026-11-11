@@ -44,6 +44,13 @@ public class ModApiScan {
     /** a class only the scanned mods define (not Fabric API, which is both scanned and baked) */
     static boolean modOnly(String n) { return modClasses.contains(n) && !n.startsWith("net/fabricmc/") && !n.startsWith("net/minecraft/"); }
     static int jars, classes, mixinRemapped;
+    // Reflection by name (Lithium ReflectionUtil.hasMethodOverride: Minecart...getDeclaredMethod("canCollideWith", Entity.class)
+    // up to Entity). Not visible as member refs, so per top-level jar: did it call Class.getDeclared*Method(s), which
+    // strings and game class literals does it hold. Pairs (class literal C, string naming a method C declares) make every
+    // game subclass of C get queryAllDeclaredMethods (lookup metadata only).
+    static final Set<String> RFL = Set.of("getDeclaredMethod", "getDeclaredMethods", "getMethod", "getMethods");
+    static boolean jarReflects; static Map<String, Set<String>> jarPairs = new HashMap<>();
+    static final Map<String, Set<String>> queryRoots = new HashMap<>();   // class literal → candidate method names
     /** mixin class -> its target classes. Runtime mixins run as companions that reach @Shadow / @Accessor / @Invoker
      *  members on the real target reflectively, so refs to a mixin's own class are registered on its targets. */
     static final Map<String, List<String>> mixinTargets = new HashMap<>();
@@ -126,6 +133,28 @@ public class ModApiScan {
             }
         }
         System.out.printf("[modapi] %d supertypes of mod classes → %d inherited methods kept%n", seenSuper.size(), inherited);
+        // by-name reflection roots: class literal C + a string that names a method C declares
+        List<Class<?>> roots = new ArrayList<>();
+        for (var e : queryRoots.entrySet()) {
+            try {
+                Class<?> c = Class.forName(e.getKey().replace('/', '.'), false, cl);
+                for (Method m : c.getDeclaredMethods()) if (e.getValue().contains(m.getName())) { roots.add(c); System.out.printf("[modapi] by-name reflection root %s (%s)%n", c.getName(), m.getName()); break; }
+            } catch (Throwable t) { }
+        }
+        int queried = 0;
+        if (!roots.isEmpty()) for (URL u : urls) {
+            if (!u.getPath().endsWith(".jar")) continue;
+            try (var z = new java.util.zip.ZipFile(new File(u.toURI()))) {
+                for (var en : Collections.list(z.entries())) {
+                    String n = en.getName();
+                    if (!n.startsWith("net/minecraft/") || !n.endsWith(".class")) continue;
+                    Class<?> k;
+                    try { k = Class.forName(n.substring(0, n.length() - 6).replace('/', '.'), false, cl); } catch (Throwable t) { continue; }
+                    for (Class<?> r : roots) if (r.isAssignableFrom(k)) { types.computeIfAbsent(k.getName(), x -> new TreeMap<>()).put("query", Boolean.TRUE); queried++; break; }
+                }
+            } catch (Exception ex) { }
+        }
+        System.out.printf("[modapi] %d by-name reflection roots → queryAllDeclaredMethods on %d game classes%n", roots.size(), queried);
         StringBuilder j = new StringBuilder("{\n  \"reflection\": [\n");
         // sun.misc.Unsafe (module jdk.unsupported, so -H:Preserve=package can't name it): mods call it from the
         // interpreter and look up theUnsafe reflectively → register the whole type, not just the scanned members
@@ -137,6 +166,7 @@ public class ModApiScan {
             @SuppressWarnings("unchecked") Set<String> ms = (Set<String>) e.getValue().get("methods");
             @SuppressWarnings("unchecked") Set<String> fs = (Set<String>) e.getValue().get("fields");
             if (ms != null) j.append(",\"methods\":[").append(String.join(",", ms)).append(']');
+            if (Boolean.TRUE.equals(e.getValue().get("query"))) j.append(",\"queryAllDeclaredMethods\":true");
             if (fs != null) { j.append(",\"fields\":["); int i = 0; for (String f : fs) j.append(i++ > 0 ? "," : "").append("{\"name\":\"").append(f).append("\"}"); j.append(']'); }
             j.append('}');
         }
@@ -148,8 +178,15 @@ public class ModApiScan {
                 jars, classes, refs.size(), ok, types.size(), missing, missingOwners.size());
     }
 
+    static int depth;
     static void scanJar(byte[] bytes) throws IOException {
         jars++;
+        if (depth++ == 0) { jarReflects = false; jarPairs = new HashMap<>(); }
+        try { scanJar0(bytes); } finally {
+            if (--depth == 0 && jarReflects) for (var e : jarPairs.entrySet()) queryRoots.computeIfAbsent(e.getKey(), k -> new HashSet<>()).addAll(e.getValue());
+        }
+    }
+    static void scanJar0(byte[] bytes) throws IOException {
         try (var z = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
                 String n = e.getName();
@@ -169,14 +206,23 @@ public class ModApiScan {
         mixin(r);
         r.accept(new ClassVisitor(Opcodes.ASM9) {
             @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] ex) {
+                Set<String> strs = new HashSet<>(), lits = new HashSet<>();
                 return new MethodVisitor(Opcodes.ASM9) {
-                    @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) { add(owner, n, d, false); }
+                    @Override public void visitEnd() { for (String c : lits) jarPairs.computeIfAbsent(c, k -> new HashSet<>()).addAll(strs); }
+                    @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                        add(owner, n, d, false);
+                        if (owner.equals("java/lang/Class") && RFL.contains(n)) jarReflects = true;
+                    }
                     @Override public void visitFieldInsn(int op, String owner, String n, String d) { add(owner, n, d, true); }
                     @Override public void visitInvokeDynamicInsn(String n, String d, Handle bsm, Object... args) {
                         handle(bsm);
                         for (Object o : args) if (o instanceof Handle h) handle(h);
                     }
-                    @Override public void visitLdcInsn(Object v) { if (v instanceof Handle h) handle(h); }
+                    @Override public void visitLdcInsn(Object v) {
+                        if (v instanceof Handle h) handle(h);
+                        else if (v instanceof String str && str.matches("[a-zA-Z_$][a-zA-Z0-9_$]*")) strs.add(str);
+                        else if (v instanceof Type t && t.getSort() == Type.OBJECT && t.getInternalName().startsWith("net/minecraft/")) lits.add(t.getInternalName());
+                    }
                 };
             }
         }, ClassReader.SKIP_FRAMES);
