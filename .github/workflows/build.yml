@@ -111,12 +111,44 @@ jobs:
           echo "PF_NAME=$n" >> "$GITHUB_ENV"
 
       - name: upload encrypted object
+        id: up1
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PF_NAME }}-encrypted
           path: out/${{ env.PF_NAME }}.tar.zst.enc
           compression-level: 0
           retention-days: 3
+          if-no-files-found: error
+
+      # the artifact service sometimes answers with an HTML error page for a few minutes; don't lose a 30-min build to it
+      - name: wait before upload retry
+        if: steps.up1.outcome == 'failure'
+        run: sleep 120
+      - name: upload encrypted object (retry)
+        id: up2
+        if: steps.up1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PF_NAME }}-encrypted
+          path: out/${{ env.PF_NAME }}.tar.zst.enc
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: error
+      - name: wait before last upload retry
+        if: steps.up1.outcome == 'failure' && steps.up2.outcome == 'failure'
+        run: sleep 300
+      - name: upload encrypted object (last retry)
+        if: steps.up1.outcome == 'failure' && steps.up2.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PF_NAME }}-encrypted
+          path: out/${{ env.PF_NAME }}.tar.zst.enc
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
           if-no-files-found: error
 
       - name: summary
