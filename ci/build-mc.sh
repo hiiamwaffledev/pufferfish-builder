@@ -5,7 +5,7 @@
 #   PF_TARGET=linux          linked linux-amd64 executable out/<name>/<name> (fast desktop test loop)
 #   mode vanilla    plain AOT build
 #   mode crema      + -H:+RuntimeClassLoading (mods added later run in the interpreter)
-#   mode crema-jit  + Ristretto (-H:+GraalJITCompileAtRuntime) + the sealed-JIT substitution (jit/subst)
+#   mode crema-jit  + Ristretto (-H:+GraalJITCompileAtRuntime) + on iOS the sealed-JIT substitution (jit/subst)
 # Fabric instances (<mc>-fabric-<loader>) build the baked closed world from ci/bake.sh with FlatMain (no Knot/Mixin).
 # Env: PF_HEAP (builder -Xmx, default 12g), PF_PAR (default 4), PF_ANALYSIS (pointsto|rta), PF_OPT (2|b),
 #      PF_GC (parallel|serial|g1), PF_EXTRA (more native-image args).
@@ -49,10 +49,13 @@ fi
 MODE_ARGS=()
 [[ $MODE == crema* ]] && MODE_ARGS+=(-H:+RuntimeClassLoading)
 if [[ $MODE == crema-jit ]]; then
-  step "sealed-JIT substitution jar"
-  rm -rf jit/build; graalvm/bin/javac -nowarn -cp "$BJ" -d jit/build $(find jit/subst -name '*.java')
-  graalvm/bin/jar cf jit/jit-subst.jar -C jit/build .
-  EXTRA_CP+=:$PWD/jit/jit-subst.jar
+  # iOS: finished code goes to pf_jit_seal (sign on device + map back) instead of mprotect(RX); linux keeps plain JIT memory
+  if [[ $TARGET != linux ]]; then
+    step "sealed-JIT substitution jar"
+    rm -rf jit/build; graalvm/bin/javac -nowarn -cp "$BJ" -d jit/build $(find jit/subst -name '*.java')
+    graalvm/bin/jar cf jit/jit-subst.jar -C jit/build .
+    EXTRA_CP+=:$PWD/jit/jit-subst.jar
+  fi
   MODE_ARGS+=(-H:+GraalJITCompileAtRuntime)
 fi
 # -H:-AOTTrivialInline: Graal bug "unexpected encoding: true true" in FrameState (hits RTA and points-to)
