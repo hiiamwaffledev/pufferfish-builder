@@ -28,9 +28,22 @@ public final class PfRefl {
                 for (Class<?> c = cls(owner); c != null; c = c.getSuperclass()) {
                     try { Method m = c.getDeclaredMethod(name, ps); m.setAccessible(true); return m; } catch (NoSuchMethodException ignored) { }
                 }
+                // interface (default) methods: LevelChunk.getSectionIndex comes from LevelHeightAccessor
+                Method im = fromInterfaces(cls(owner), name, ps);
+                if (im != null) { im.setAccessible(true); return im; }
                 throw new NoSuchMethodError(owner + "." + name + desc);
             } catch (ClassNotFoundException e) { throw new NoClassDefFoundError(e.getMessage()); }
         });
+    }
+
+    private static Method fromInterfaces(Class<?> c, String name, Class<?>[] ps) {
+        for (Class<?> k = c; k != null; k = k.getSuperclass())
+            for (Class<?> i : k.getInterfaces()) {
+                try { return i.getDeclaredMethod(name, ps); } catch (NoSuchMethodException ignored) { }
+                Method m = fromInterfaces(i, name, ps);
+                if (m != null) return m;
+            }
+        return null;
     }
 
     public static Constructor<?> ctor(String owner, String desc) {
@@ -58,6 +71,16 @@ public final class PfRefl {
         catch (InvocationTargetException e) { throw sneaky(e.getCause()); }
         catch (IllegalAccessException e) { throw new IllegalAccessError(e.getMessage()); }
     }
+    private static final ConcurrentHashMap<String, Class<?>> CLASSES = new ConcurrentHashMap<>();
+    /** instanceof for classes runtime-mod code can't name (package-private game classes) */
+    public static boolean isInstance(Object o, String internal) {
+        if (o == null) return false;
+        Class<?> c = CLASSES.computeIfAbsent(internal, k -> { try { return cls(k); } catch (ClassNotFoundException e) { return Void.class; } });
+        return c.isInstance(o);
+    }
+    public static boolean class$isAssignableFrom(Class<?> a, Class<?> b) { return a.isAssignableFrom(b) || RuntimeMixins.virtuallyImplements(a, b); }
+    public static boolean class$isInstance(Class<?> a, Object o) { return a.isInstance(o) || (o != null && RuntimeMixins.virtuallyImplements(a, o.getClass())); }
+    public static Object class$cast(Class<?> a, Object o) { return o == null || class$isInstance(a, o) ? o : a.cast(o); }
     public static Object construct(Object[] args, String owner, String desc) {
         try { return ctor(owner, desc).newInstance(args); }
         catch (InvocationTargetException e) { throw sneaky(e.getCause()); }
@@ -93,8 +116,26 @@ public final class PfRefl {
     /** @Mutable @Final shadow fields: plain reflection refuses final instance fields → go through Unsafe-free path. */
     static final class FinalSetter {
         static void set(Field f, Object o, Object v) throws IllegalAccessException {
-            // Java 25: setAccessible(true) allows writing non-static final fields of non-record, non-hidden classes
-            f.set(o, v);
+            // Java 25: setAccessible(true) allows writing non-static final fields of non-record, non-hidden classes.
+            // static final (@Shadow @Final @Mutable static, e.g. Lithium nulling Mth.SIN): only Unsafe can. AOT code may have
+            // folded the old value; that's the price of mutating a constant after the fact.
+            if (!Modifier.isStatic(f.getModifiers())) { f.set(o, v); return; }
+            sun.misc.Unsafe u = unsafe();
+            Object base = u.staticFieldBase(f); long off = u.staticFieldOffset(f);
+            Class<?> t = f.getType();
+            if (!t.isPrimitive()) u.putObjectVolatile(base, off, v);
+            else if (t == int.class) u.putIntVolatile(base, off, (Integer) v);
+            else if (t == long.class) u.putLongVolatile(base, off, (Long) v);
+            else if (t == boolean.class) u.putBooleanVolatile(base, off, (Boolean) v);
+            else if (t == float.class) u.putFloatVolatile(base, off, (Float) v);
+            else if (t == double.class) u.putDoubleVolatile(base, off, (Double) v);
+            else if (t == byte.class) u.putByteVolatile(base, off, (Byte) v);
+            else if (t == short.class) u.putShortVolatile(base, off, (Short) v);
+            else u.putCharVolatile(base, off, (Character) v);
+        }
+        private static sun.misc.Unsafe unsafe() {
+            try { Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe"); f.setAccessible(true); return (sun.misc.Unsafe) f.get(null); }
+            catch (ReflectiveOperationException e) { throw new IllegalStateException(e); }
         }
     }
 

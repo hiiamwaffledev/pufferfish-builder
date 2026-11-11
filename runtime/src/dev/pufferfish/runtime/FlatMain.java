@@ -127,7 +127,9 @@ public final class FlatMain extends FabricLauncherBase {
         for (net.fabricmc.loader.impl.ModContainerImpl m : loader.getModsInternal()) {
             if (bakedIds.contains(m.getMetadata().getId())) continue;
             Collection<String> cfgs = m.getMetadata().getMixinConfigs(EnvType.CLIENT);
-            if (!cfgs.isEmpty()) mods.add(new Object[] { m.getMetadata().getId(), cfgs, m.getRootPaths() });
+            // access widener: the AOT game keeps its private members private; RuntimeMixins routes widened accesses via reflection
+            String aw = m.getMetadata() instanceof net.fabricmc.loader.impl.metadata.LoaderModMetadata lm ? lm.getClassTweaker() : null;
+            if (!cfgs.isEmpty() || aw != null) mods.add(new Object[] { m.getMetadata().getId(), cfgs, m.getRootPaths(), aw });
         }
         if (mods.isEmpty()) return;
         long t0 = System.nanoTime();
