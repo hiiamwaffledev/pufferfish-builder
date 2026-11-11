@@ -1,7 +1,6 @@
 apple.security.KeychainStore
 java.net.DefaultInterface
 java.nio.file.FileSystems$DefaultFileSystemHolder
-java.nio.channels.spi.SelectorProvider$Holder
 jdk.internal.util.Architecture
 jdk.internal.util.OperatingSystem
 sun.nio.ch.DefaultSelectorProvider

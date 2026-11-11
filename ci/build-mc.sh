@@ -36,11 +36,12 @@ if [[ $TARGET == ios ]]; then
   graalvm/bin/javac -nowarn -cp "$ASM" -d aot/cross/build tools/cross-src/GenJdkSubst.java
   graalvm/bin/java -cp "$ASM:aot/cross/build" GenJdkSubst aot/cross/darwin-java.base aot/cross/linux-java.base \
     aot/cross/darwin-only/java.base aot/cross/jdk-subst.txt aot/cross/jdk-subst.jar aot/cross/jdk-exports | tail -3
-  graalvm/bin/javac -nowarn --add-exports java.base/sun.nio.fs=ALL-UNNAMED -cp "$BJ" -d aot/cross/subst-build $(find tools/cross-src/subst -name '*.java')
+  graalvm/bin/javac -nowarn --add-exports java.base/sun.nio.fs=ALL-UNNAMED --add-exports java.base/sun.nio.ch=ALL-UNNAMED -cp "$BJ" -d aot/cross/subst-build $(find tools/cross-src/subst -name '*.java')
   rm -f aot/cross/cross-subst.jar; graalvm/bin/jar cf aot/cross/cross-subst.jar -C aot/cross/subst-build .
   EXTRA_CP=:$PWD/aot/cross/jdk-subst.jar:$PWD/aot/cross/cross-subst.jar
   RI=$(paste -sd, aot/cross/jdk-runtime-init.txt)
   mapfile -t PA < <(cat aot/cross/patch-args aot/cross/jdk-exports)
+  PA+=(-J--add-exports=java.base/sun.nio.ch=ALL-UNNAMED)  # cross-subst SelectorProvider.provider() → sun.nio.ch.DefaultSelectorProvider
   TARGET_ARGS=(-J-Dsvm.targetArch=aarch64 "${PA[@]}" --target=ios-aarch64 -H:+UseCAPCache -H:CAPCacheDir=$PWD/aot/cross/cap-ios
     -H:+ExitAfterRelocatableImageWrite -R:ReservedAddressSpaceSize=${PF_IOS_RESERVE:-1g} --future-defaults=run-time-initialize-jdk
     "--initialize-at-run-time=$RI" -march=armv8.1-a)
