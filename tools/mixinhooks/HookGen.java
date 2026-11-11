@@ -274,6 +274,27 @@ public class HookGen {
             int want = Type.getArgumentTypes(x.group(3)).length + (st ? 0 : 1);
             if (Type.getArgumentTypes(m.desc).length != want) return "Redirect captures target args";
         }
+        // a WrapOperation moves the field write into a bridge method: illegal for a final field (written in <init>)
+        if (v.equals("FIELD") && Type.getReturnType(m.desc).getSort() == Type.VOID && val(at, "target") instanceof String t) {
+            Matcher x = Pattern.compile("L([^;]+);([^:]+):(.*)").matcher(t);
+            if (!x.matches()) return "Redirect target unparsed";
+            Boolean fin = isFinalField(x.group(1), x.group(2));
+            if (fin == null || fin) return "Redirect of final field write";
+        }
+        return null;
+    }
+
+    /** final-ness of field owner.name (superclasses searched); null = not found */
+    static Boolean isFinalField(String owner, String name) {
+        for (String c = owner; c != null; ) {
+            try (InputStream in = cp.getResourceAsStream(c + ".class")) {
+                if (in == null) return null;
+                ClassNode n = new ClassNode();
+                new ClassReader(in.readAllBytes()).accept(n, ClassReader.SKIP_CODE);
+                for (FieldNode f : n.fields) if (f.name.equals(name)) return (f.access & Opcodes.ACC_FINAL) != 0;
+                c = n.superName;
+            } catch (IOException e) { return null; }
+        }
         return null;
     }
 

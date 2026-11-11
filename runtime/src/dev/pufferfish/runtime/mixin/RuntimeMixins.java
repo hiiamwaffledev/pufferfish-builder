@@ -353,6 +353,8 @@ public final class RuntimeMixins {
                     } else if (!own.declaredMethods.contains(c.name + c.desc) && !own.itf) {
                         replace(m, c, shadowCall(c, selfOwner(own))); done = true;   // inherited from the mixin's superclass
                     }
+                } else if (own != null && c.getOpcode() == Opcodes.INVOKESTATIC && own.shadowMethods.contains(c.name + c.desc)) {
+                    replace(m, c, staticShadowCall(c, own.target)); done = true;   // @Shadow private static (Architectury MixinNaturalSpawner)
                 } else if (own != null && c.getOpcode() == Opcodes.INVOKESTATIC && !own.declaredMethods.contains(c.name + c.desc) && !own.itf) {
                     m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, own.target, c.name, c.desc, false)); done = true;
                 } else if (mi != null && c.getOpcode() == Opcodes.INVOKESPECIAL && !c.name.equals("<init>") && !c.owner.equals(mi.name)) {
@@ -590,6 +592,37 @@ public final class RuntimeMixins {
             c.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "dev/pufferfish/runtime/mixin/PfFields", "set", "(Ljava/lang/Object;Ljava/lang/Object;II)V", false));
         }
         return c;
+    }
+
+    /** static @Shadow call: invokestatic on the target, or PfRefl.invoke(null, args, ...) when it isn't public */
+    private static InsnList staticShadowCall(MethodInsnNode c, String target) {
+        InsnList r = new InsnList();
+        if (accessible(target, c.name, false)) {
+            boolean itf = isInterface(target);
+            r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, target, c.name, c.desc, itf));
+            return r;
+        }
+        Type[] args = Type.getArgumentTypes(c.desc); Type ret = Type.getReturnType(c.desc);
+        r.add(packArgs(args));                                  // args... → arr
+        r.add(new InsnNode(Opcodes.ACONST_NULL)); r.add(new InsnNode(Opcodes.SWAP));   // → null, arr
+        r.add(new LdcInsnNode(target)); r.add(new LdcInsnNode(c.name)); r.add(new LdcInsnNode(c.desc));
+        r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "dev/pufferfish/runtime/mixin/PfRefl", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Object;", false));
+        if (ret.getSort() == Type.VOID) r.add(new InsnNode(Opcodes.POP)); else unbox(r, ret);
+        return r;
+    }
+
+    /** stack: args... → Object[] (boxed), leaving whatever is below the args untouched */
+    private static InsnList packArgs(Type[] args) {
+        InsnList r = new InsnList();
+        r.add(ldcInt(args.length)); r.add(new TypeInsnNode(Opcodes.ANEWARRAY, "java/lang/Object"));
+        for (int i = args.length - 1; i >= 0; i--) {
+            if (args[i].getSize() == 2) { r.add(new InsnNode(Opcodes.DUP_X2)); r.add(new InsnNode(Opcodes.POP)); }
+            else r.add(new InsnNode(Opcodes.SWAP));
+            box(r, args[i]);
+            r.add(new InsnNode(Opcodes.SWAP)); r.add(new InsnNode(Opcodes.DUP_X1)); r.add(new InsnNode(Opcodes.SWAP));
+            r.add(ldcInt(i)); r.add(new InsnNode(Opcodes.SWAP)); r.add(new InsnNode(Opcodes.AASTORE));
+        }
+        return r;
     }
 
     private static InsnList shadowCall(MethodInsnNode c, String target) {
