@@ -23,7 +23,8 @@ import org.objectweb.asm.tree.*;
  *    when not public), fields the mixin adds live in PfFields side storage.
  *  - mod code using an interface a mixin adds to a target (or an @Accessor/@Invoker interface) gets its casts,
  *    instanceof and interface calls rewritten to a generated dispatcher (pf.dispatch.*).
- * Unsupported injectors (@Redirect, @ModifyArg, @WrapOperation, @Overwrite, ...) are reported and skipped.
+ * Every injector kind (@Inject, @ModifyArg/Variable/Constant, MixinExtras wrappers, @Redirect, @Overwrite) runs through a
+ * stand-in HookGen baked for it; handlers without one are reported and turn their mixin class off.
  */
 public final class RuntimeMixins {
     static final String SHADOW = "Lorg/spongepowered/asm/mixin/Shadow;", UNIQUE = "Lorg/spongepowered/asm/mixin/Unique;",
@@ -50,6 +51,7 @@ public final class RuntimeMixins {
 
     private static ClassLoader loader;
     private static final Map<String, Integer> hookIds = new HashMap<>();         // mixinClass#name+desc -> id
+    private static final Map<Integer, Integer> hookDrop = new HashMap<>();       // id -> trailing stand-in args the handler doesn't take
     private static final Map<String, MixinInfo> mixins = new HashMap<>();        // internal name -> info
     private static final List<MixinInfo> byId = new ArrayList<>();
     /** interface (added by a mixin, or an accessor interface) -> mixins implementing it on some target */
@@ -69,7 +71,10 @@ public final class RuntimeMixins {
         try (InputStream in = RuntimeMixins.class.getClassLoader().getResourceAsStream("pufferfish-hooks.txt")) {
             if (in != null) for (String l : new String(in.readAllBytes(), StandardCharsets.UTF_8).split("\n")) {
                 String[] p = l.split("\t");
-                if (p.length == 5) hookIds.put(p[2] + "#" + p[3] + p[4], Integer.parseInt(p[0]));
+                if (p.length < 5) continue;
+                int id = Integer.parseInt(p[0]);
+                hookIds.put(p[2] + "#" + p[3] + p[4], id);
+                if (p.length > 5 && !p[5].equals("0")) hookDrop.put(id, Integer.parseInt(p[5].trim()));
             }
         } catch (IOException ignored) { }
         for (Object[] m : mods) {
@@ -128,10 +133,9 @@ public final class RuntimeMixins {
             if ((m.access & Opcodes.ACC_STATIC) == 0 && (m.access & Opcodes.ACC_ABSTRACT) == 0) mi.ownMethods.add(m.name + m.desc);
             String kind = injectorKind(m);
             if (kind == null) continue;
-            if (kind.equals("Inject")) {
-                Integer id = hookIds.get(name + "#" + m.name + m.desc);
-                if (id == null) { unsupported++; mi.unsupported++; report.add(mod + ": " + simple(name) + "." + m.name + " @Inject has no baked hook (target not in the hook set)"); }
-            } else { unsupported++; mi.unsupported++; report.add(mod + ": " + simple(name) + "." + m.name + " @" + kind + " not supported yet"); }
+            // every injector kind runs through a baked stand-in (HookGen); none baked = this mod wasn't in the hook scan
+            Integer id = hookIds.get(name + "#" + m.name + m.desc);
+            if (id == null) { unsupported++; mi.unsupported++; report.add(mod + ": " + simple(name) + "." + m.name + " @" + kind + " has no baked hook (not in the hook set)"); }
         }
         if (!mi.itf) mi.interfaces.addAll(cn.interfaces);
         else {
@@ -158,21 +162,27 @@ public final class RuntimeMixins {
                 String k = e.getKey().substring(pre.length()); int p = k.indexOf('(');
                 ids.put(k.substring(0, p) + eraseDesc(k.substring(p), mi), e.getValue());
             }
+            Set<Integer> unmatched = new HashSet<>(ids.values());
             for (Method m : ms) {
                 boolean inst = !isStaticOrig(mi, m);
                 String origDesc = origDesc(m, inst);
                 Integer id = ids.get(m.getName() + origDesc);
                 if (id == null) continue;
                 m.setAccessible(true);
+                int drop = hookDrop.getOrDefault(id, 0);
                 PfHooks.H[id] = (self, args) -> {
-                    Object[] a = args;
-                    if (inst) { a = new Object[args.length + 1]; a[0] = self; System.arraycopy(args, 0, a, 1, args.length); }
-                    try { m.invoke(null, a); }
+                    int n = args.length - drop, o = inst ? 1 : 0;
+                    Object[] a = new Object[n + o];
+                    if (inst) a[0] = self;
+                    System.arraycopy(args, 0, a, o, n);
+                    try { return m.invoke(null, a); }
                     catch (java.lang.reflect.InvocationTargetException e) { throw PfRefl.sneaky(e.getCause()); }
                     catch (IllegalAccessException e) { throw new IllegalAccessError(e.getMessage()); }
                 };
                 hooked++;
+                unmatched.remove(id);
             }
+            for (var e : ids.entrySet()) if (unmatched.contains(e.getValue())) report.add(mi.mod + ": " + simple(mi.name) + "." + e.getKey() + " baked hook " + e.getValue() + " matches no companion method");
         }
     }
 

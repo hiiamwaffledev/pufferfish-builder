@@ -1,6 +1,6 @@
 package dev.pufferfish.runtime.mixin;
 
-/** A runtime mod's injector handler plugged into a baked hook slot (see HookGen / PfHooks). */
+/** A runtime mod's injector handler plugged into a baked hook slot (see HookGen / PfHooks). Returns the handler's result (null for void). */
 public interface Hook {
-    void call(Object self, Object[] args);
+    Object call(Object self, Object[] args);
 }

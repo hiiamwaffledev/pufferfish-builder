@@ -36,7 +36,7 @@ public class HookGen {
     static final List<String> commonMixins = new ArrayList<>(), clientMixins = new ArrayList<>();
     static final StringBuilder table = new StringBuilder();
     static int nextId, skipped, mixinCount;
-    static final Map<String, Integer> skipWhy = new TreeMap<>();
+    static final Map<String, Integer> skipWhy = new TreeMap<>(), kinds = new TreeMap<>();
 
     static final Set<String> exclude = new HashSet<>();
 
@@ -49,8 +49,8 @@ public class HookGen {
             for (Path p : (Iterable<Path>) s.filter(x -> x.toString().endsWith(".jar")).sorted()::iterator) scanMod(Files.readAllBytes(p));
         }
         writeJar(Paths.get(a[0]));
-        System.out.printf("[hookgen] %d hooks in %d stand-in mixins (%d common, %d client); %d handlers skipped %s%n",
-                nextId, mixinCount, commonMixins.size(), clientMixins.size(), skipped, skipWhy);
+        System.out.printf("[hookgen] %d hooks %s in %d stand-in mixins (%d common, %d client); %d handlers skipped %s%n",
+                nextId, kinds, mixinCount, commonMixins.size(), clientMixins.size(), skipped, skipWhy);
     }
 
     // ---- mod / config discovery -------------------------------------------------------------------------------
@@ -121,15 +121,17 @@ public class HookGen {
         cn.invisibleAnnotations = new ArrayList<>(List.of(mixinAnn));
         int made = 0;
         for (MethodNode m : src.methods) {
-            AnnotationNode inj = find(m.visibleAnnotations, INJECT);
-            if (inj == null) inj = find(m.invisibleAnnotations, INJECT);
-            if (inj == null) continue;
+            Spec sp = spec(m, itf);
+            if (sp == null) continue;
+            if (sp.skip != null) { skip(sp.skip, 1); continue; }
             if (exclude.contains(mixinName + "#" + m.name + m.desc)) { skip("failed in a previous bake", 1); continue; }
-            String why = descProblem(m.desc);
+            String why = descProblem(sp.desc);
             if (why != null) { skip(why, 1); continue; }
             int id = nextId++;
-            table.append(id).append('\t').append(modId).append('\t').append(mixinName).append('\t').append(m.name).append('\t').append(m.desc).append('\n');
-            cn.methods.add(stub(m, inj, id, itf));
+            table.append(id).append('\t').append(modId).append('\t').append(mixinName).append('\t').append(m.name).append('\t').append(m.desc)
+                 .append('\t').append(sp.drop).append('\n');
+            kinds.merge(sp.kind, 1, Integer::sum);
+            cn.methods.add(stub(m, sp, id));
             made++;
         }
         if (made == 0) return;
@@ -142,11 +144,151 @@ public class HookGen {
         (client ? clientMixins : commonMixins).add(name.substring(PKG.length()).replace('/', '.'));
     }
 
-    static MethodNode stub(MethodNode src, AnnotationNode inj, int id, boolean itf) {
-        boolean stat = (src.access & Opcodes.ACC_STATIC) != 0;
-        int access = (itf ? Opcodes.ACC_PRIVATE : Opcodes.ACC_PRIVATE) | (stat ? Opcodes.ACC_STATIC : 0);
-        MethodNode m = new MethodNode(access, "pf$hook" + id + "$" + src.name, src.desc, src.signature, null);
-        // same @Inject, but never fail the bake when a target moved (require = 0); keep @Slice/@At/locals/cancellable
+    // ---- injector kinds ---------------------------------------------------------------------------------------------
+    // Every stand-in keeps the mod's handler descriptor (so Mixin resolves @At/locals/sugar exactly as for the mod),
+    // except @Redirect and @Overwrite: those become @WrapOperation / @WrapMethod with an Operation appended (drop = 1:
+    // the runtime strips it before calling the mod's handler). The bake holds the hooks of every scanned mod at once;
+    // two @Redirects (or @Overwrites) of the same thing would conflict, wrappers chain. With an empty slot each stand-in
+    // does what the code did without the mod: return the value unchanged, call the original operation, or return true.
+
+    static final String MI = "Lorg/spongepowered/asm/mixin/injection/", MX = "Lcom/llamalad7/mixinextras/injector/";
+    static final String OPERATION = "com/llamalad7/mixinextras/injector/wrapoperation/Operation";
+    static final String WRAP_OPERATION = MX + "wrapoperation/WrapOperation;", WRAP_METHOD = MX + "wrapmethod/WrapMethod;";
+    static final String OVERWRITE = "Lorg/spongepowered/asm/mixin/Overwrite;";
+
+    enum Def { NONE, ARG, TRUE, OP }
+
+    static final class Spec {
+        String kind, skip;                 // skip != null: not supported, reason
+        AnnotationNode ann;                // stand-in's injector annotation
+        AnnotationNode orig;               // the mod's annotation (replaced by ann)
+        String desc;                       // stand-in descriptor
+        int drop;                          // trailing stand-in args the mod's handler doesn't take
+        Def def = Def.NONE; int defArg;    // empty-slot behaviour (ARG: return param defArg; OP: Operation is param defArg)
+        boolean keepParamAnns = true;
+        Spec(String kind) { this.kind = kind; }
+        static Spec no(String kind, String why) { Spec s = new Spec(kind); s.skip = why; return s; }
+    }
+
+    static AnnotationNode injector(MethodNode m) {
+        for (List<AnnotationNode> l : Arrays.asList(m.visibleAnnotations, m.invisibleAnnotations)) if (l != null) for (AnnotationNode a : l) {
+            if (a.desc.startsWith(MI) && !a.desc.contains("/callback/") && !a.desc.equals(MI + "Coerce;")) return a;
+            if (a.desc.startsWith(MX) && !a.desc.contains("/sugar/")) return a;
+            if (a.desc.equals(OVERWRITE)) return a;
+        }
+        return null;
+    }
+
+    static Spec spec(MethodNode m, boolean itf) {
+        AnnotationNode a = injector(m);
+        if (a == null) return null;
+        String k = a.desc.substring(a.desc.lastIndexOf('/') + 1, a.desc.length() - 1);
+        Type[] ps = Type.getArgumentTypes(m.desc);
+        Type ret = Type.getReturnType(m.desc);
+        Spec s = new Spec(k);
+        s.orig = a; s.desc = m.desc; s.ann = copyRequire0(a);
+        switch (k) {
+            case "Inject", "ModifyArgs" -> { if (ret.getSort() != Type.VOID) return Spec.no(k, "non-void " + k); }
+            case "ModifyVariable", "ModifyConstant", "ModifyExpressionValue", "ModifyReceiver", "ModifyReturnValue" -> {
+                if (ps.length == 0 || ret.getSort() == Type.VOID) return Spec.no(k, "odd " + k + " shape");
+                s.def = Def.ARG; s.defArg = 0;
+            }
+            case "ModifyArg" -> {
+                if (ps.length == 0) return Spec.no(k, "odd ModifyArg shape");
+                int i = 0;
+                if (ps.length > 1) {   // handler takes all target args: the modified one is "index", else the only one of the return type
+                    Object idx = val(a, "index");
+                    if (idx instanceof Integer n) i = n;
+                    else {
+                        i = -1;
+                        for (int j = 0; j < ps.length; j++) if (ps[j].equals(ret)) { if (i >= 0) return Spec.no(k, "ambiguous ModifyArg"); i = j; }
+                        if (i < 0) return Spec.no(k, "ambiguous ModifyArg");
+                    }
+                }
+                s.def = Def.ARG; s.defArg = i;
+            }
+            case "WrapWithCondition" -> { if (ret.getSort() != Type.BOOLEAN) return Spec.no(k, "odd WrapWithCondition"); s.def = Def.TRUE; }
+            case "WrapOperation", "WrapMethod" -> {
+                int op = -1;
+                for (int j = 0; j < ps.length; j++) if (ps[j].getSort() == Type.OBJECT && ps[j].getInternalName().equals(OPERATION)) { op = j; break; }
+                if (op < 0) return Spec.no(k, "no Operation param");
+                s.def = Def.OP; s.defArg = op;
+            }
+            case "Redirect" -> {
+                String why = redirectProblem(a, m);
+                if (why != null) return Spec.no(k, why);
+                AnnotationNode w = new AnnotationNode(WRAP_OPERATION);
+                w.values = new ArrayList<>();
+                for (String key : new String[] { "method", "remap" }) { Object v = val(a, key); if (v != null) { w.values.add(key); w.values.add(v); } }
+                Object at = val(a, "at"), slice = val(a, "slice");
+                w.values.add("at"); w.values.add(at instanceof List<?> ? at : List.of(at));
+                if (slice != null) { w.values.add("slice"); w.values.add(slice instanceof List<?> ? slice : List.of(slice)); }
+                w.values.add("require"); w.values.add(0);
+                s.ann = w; s.drop = 1; s.keepParamAnns = false;
+                s.desc = withOperation(m.desc); s.def = Def.OP; s.defArg = ps.length;
+            }
+            case "Overwrite" -> {
+                if (itf) return Spec.no(k, "Overwrite in interface mixin");
+                if (m.name.equals("<init>") || m.name.equals("<clinit>")) return Spec.no(k, "odd Overwrite");
+                AnnotationNode w = new AnnotationNode(WRAP_METHOD);
+                w.values = new ArrayList<>(List.of("method", List.of(m.name + m.desc), "require", 0));
+                s.ann = w; s.drop = 1; s.keepParamAnns = false;
+                s.desc = withOperation(m.desc); s.def = Def.OP; s.defArg = ps.length;
+            }
+            default -> { return Spec.no(k, "kind " + k); }
+        }
+        return s;
+    }
+
+    static String withOperation(String desc) {
+        int p = desc.indexOf(')');
+        return desc.substring(0, p) + "L" + OPERATION + ";" + desc.substring(p);
+    }
+
+    /** a @Redirect WrapOperation can stand in for: INVOKE/FIELD/NEW, no array element access, no captured target args */
+    static String redirectProblem(AnnotationNode a, MethodNode m) {
+        Object atv = val(a, "at");
+        if (atv instanceof List<?> l && l.size() == 1) atv = l.get(0);
+        if (!(atv instanceof AnnotationNode at)) return "Redirect without @At";
+        String v = String.valueOf(val(at, "value"));
+        if (val(at, "args") instanceof List<?> args) for (Object x : args) if (String.valueOf(x).startsWith("array")) return "Redirect of array access";
+        if (!v.equals("INVOKE") && !v.equals("FIELD") && !v.equals("NEW")) return "Redirect @At(" + v + ")";
+        if (v.equals("INVOKE") && val(at, "target") instanceof String t) {   // handler = (receiver?, args...) [+ captured target args]
+            Matcher x = Pattern.compile("L([^;]+);([^(]+)(\\(.*)").matcher(t);
+            if (!x.matches()) return "Redirect target unparsed";
+            Boolean st = isStatic(x.group(1), x.group(2), x.group(3));
+            if (st == null) return "Redirect target not found";
+            int want = Type.getArgumentTypes(x.group(3)).length + (st ? 0 : 1);
+            if (Type.getArgumentTypes(m.desc).length != want) return "Redirect captures target args";
+        }
+        return null;
+    }
+
+    /** static-ness of owner.name+desc, searching superclasses and interfaces on the bake classpath; null = not found */
+    static Boolean isStatic(String owner, String name, String desc) {
+        Deque<String> q = new ArrayDeque<>(List.of(owner)); Set<String> seen = new HashSet<>();
+        while (!q.isEmpty()) {
+            String c = q.poll();
+            if (!seen.add(c)) continue;
+            try (InputStream in = cp.getResourceAsStream(c + ".class")) {
+                if (in == null) continue;
+                ClassNode n = new ClassNode();
+                new ClassReader(in.readAllBytes()).accept(n, ClassReader.SKIP_CODE);
+                for (MethodNode mm : n.methods) if (mm.name.equals(name) && mm.desc.equals(desc)) return (mm.access & Opcodes.ACC_STATIC) != 0;
+                if (n.superName != null) q.add(n.superName);
+                q.addAll(n.interfaces);
+            } catch (IOException e) { return null; }
+        }
+        return null;
+    }
+
+    static Object val(AnnotationNode a, String key) {
+        if (a.values != null) for (int i = 0; i < a.values.size(); i += 2) if (key.equals(a.values.get(i))) return a.values.get(i + 1);
+        return null;
+    }
+
+    /** same annotation, but never fail the bake when a target moved (require = 0) */
+    static AnnotationNode copyRequire0(AnnotationNode inj) {
         AnnotationNode a = new AnnotationNode(inj.desc);
         a.values = new ArrayList<>();
         if (inj.values != null) for (int i = 0; i < inj.values.size(); i += 2) {
@@ -154,18 +296,36 @@ public class HookGen {
             if (k.equals("require") || k.equals("expect") || k.equals("allow")) continue;
             a.values.add(k); a.values.add(inj.values.get(i + 1));
         }
-        a.values.add("require"); a.values.add(0);
+        if (!inj.desc.equals(OVERWRITE)) { a.values.add("require"); a.values.add(0); }
+        return a;
+    }
+
+    /**
+     * Stand-in body:  Hook h = PfHooks.H[id]; if (h != null) return (R) h.call(this|null, new Object[]{ all args });
+     *                 else <default>   (see Def)
+     */
+    static MethodNode stub(MethodNode src, Spec sp, int id) {
+        boolean stat = (src.access & Opcodes.ACC_STATIC) != 0;
+        MethodNode m = new MethodNode(Opcodes.ACC_PRIVATE | (stat ? Opcodes.ACC_STATIC : 0), "pf$hook" + id + "$" + src.name, sp.desc, null, null);
         m.visibleAnnotations = new ArrayList<>();
         m.invisibleAnnotations = new ArrayList<>();
-        if (src.visibleAnnotations != null) for (AnnotationNode x : src.visibleAnnotations) m.visibleAnnotations.add(x == inj ? a : x);
-        if (src.invisibleAnnotations != null) for (AnnotationNode x : src.invisibleAnnotations) m.invisibleAnnotations.add(x == inj ? a : x);
-        m.visibleParameterAnnotations = src.visibleParameterAnnotations;
-        m.invisibleParameterAnnotations = src.invisibleParameterAnnotations;
-        m.visibleAnnotableParameterCount = src.visibleAnnotableParameterCount;
-        m.invisibleAnnotableParameterCount = src.invisibleAnnotableParameterCount;
+        if (src.visibleAnnotations != null) for (AnnotationNode x : src.visibleAnnotations) if (x != sp.orig) m.visibleAnnotations.add(x);
+        if (src.invisibleAnnotations != null) for (AnnotationNode x : src.invisibleAnnotations) if (x != sp.orig) m.invisibleAnnotations.add(x);
+        boolean inv = src.invisibleAnnotations != null && src.invisibleAnnotations.contains(sp.orig);
+        (inv ? m.invisibleAnnotations : m.visibleAnnotations).add(sp.ann);
+        if (sp.keepParamAnns) {
+            m.signature = src.signature;
+            m.visibleParameterAnnotations = src.visibleParameterAnnotations;
+            m.invisibleParameterAnnotations = src.invisibleParameterAnnotations;
+            m.visibleAnnotableParameterCount = src.visibleAnnotableParameterCount;
+            m.invisibleAnnotableParameterCount = src.invisibleAnnotableParameterCount;
+        }
         InsnList c = m.instructions;
-        Type[] args = Type.getArgumentTypes(src.desc);
-        LabelNode done = new LabelNode();
+        Type[] args = Type.getArgumentTypes(sp.desc);
+        Type ret = Type.getReturnType(sp.desc);
+        int[] slot = new int[args.length];
+        for (int i = 0, s = stat ? 0 : 1; i < args.length; s += args[i].getSize(), i++) slot[i] = s;
+        LabelNode fallback = new LabelNode();
         c.add(new FieldInsnNode(Opcodes.GETSTATIC, HOOKS, "H", "[L" + HOOK + ";"));
         c.add(ldcInt(id));
         c.add(new InsnNode(Opcodes.AALOAD));
@@ -173,26 +333,68 @@ public class HookGen {
         LabelNode call = new LabelNode();
         c.add(new JumpInsnNode(Opcodes.IFNONNULL, call));
         c.add(new InsnNode(Opcodes.POP));
-        c.add(new JumpInsnNode(Opcodes.GOTO, done));
+        c.add(new JumpInsnNode(Opcodes.GOTO, fallback));
         c.add(call);
         c.add(stat ? new InsnNode(Opcodes.ACONST_NULL) : new VarInsnNode(Opcodes.ALOAD, 0));
-        c.add(ldcInt(args.length));
+        c.add(objectArray(args, slot, args.length));
+        c.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, HOOK, "call", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", true));
+        returnObject(c, ret);
+        c.add(fallback);
+        switch (sp.def) {
+            case NONE -> { if (ret.getSort() != Type.VOID) throw new IllegalStateException("no default for " + sp.kind); c.add(new InsnNode(Opcodes.RETURN)); }
+            case TRUE -> { c.add(new InsnNode(Opcodes.ICONST_1)); c.add(new InsnNode(Opcodes.IRETURN)); }
+            case ARG -> {
+                Type t = args[sp.defArg];
+                c.add(new VarInsnNode(t.getOpcode(Opcodes.ILOAD), slot[sp.defArg]));
+                if (!t.equals(ret) && ret.getSort() >= Type.ARRAY) c.add(new TypeInsnNode(Opcodes.CHECKCAST, ret.getInternalName()));
+                c.add(new InsnNode(ret.getOpcode(Opcodes.IRETURN)));
+            }
+            case OP -> {   // original.call(args before the Operation)
+                c.add(new VarInsnNode(Opcodes.ALOAD, slot[sp.defArg]));
+                c.add(objectArray(args, slot, sp.defArg));
+                c.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, OPERATION, "call", "([Ljava/lang/Object;)Ljava/lang/Object;", true));
+                returnObject(c, ret);
+            }
+        }
+        return m;
+    }
+
+    static InsnList objectArray(Type[] args, int[] slot, int n) {
+        InsnList c = new InsnList();
+        c.add(ldcInt(n));
         c.add(new TypeInsnNode(Opcodes.ANEWARRAY, "java/lang/Object"));
-        int slot = stat ? 0 : 1;
-        for (int i = 0; i < args.length; i++) {
+        for (int i = 0; i < n; i++) {
             c.add(new InsnNode(Opcodes.DUP));
             c.add(ldcInt(i));
-            c.add(new VarInsnNode(args[i].getOpcode(Opcodes.ILOAD), slot));
+            c.add(new VarInsnNode(args[i].getOpcode(Opcodes.ILOAD), slot[i]));
             box(c, args[i]);
             c.add(new InsnNode(Opcodes.AASTORE));
-            slot += args[i].getSize();
         }
-        c.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, HOOK, "call", "(Ljava/lang/Object;[Ljava/lang/Object;)V", true));
-        c.add(done);
-        Type ret = Type.getReturnType(src.desc);
-        if (ret.getSort() != Type.VOID) { skip("non-void injector", 1); }
-        c.add(new InsnNode(Opcodes.RETURN));
-        return m;
+        return c;
+    }
+
+    /** Object on the stack → return it as ret (void: drop it) */
+    static void returnObject(InsnList c, Type ret) {
+        switch (ret.getSort()) {
+            case Type.VOID -> { c.add(new InsnNode(Opcodes.POP)); c.add(new InsnNode(Opcodes.RETURN)); return; }
+            case Type.OBJECT, Type.ARRAY -> {
+                if (!ret.getDescriptor().equals("Ljava/lang/Object;")) c.add(new TypeInsnNode(Opcodes.CHECKCAST, ret.getInternalName()));
+            }
+            default -> {
+                String w = switch (ret.getSort()) {
+                    case Type.BOOLEAN -> "java/lang/Boolean"; case Type.CHAR -> "java/lang/Character";
+                    default -> "java/lang/Number";   // byte/short/int/long/float/double: any Number
+                };
+                c.add(new TypeInsnNode(Opcodes.CHECKCAST, w));
+                String m = switch (ret.getSort()) {
+                    case Type.BOOLEAN -> "booleanValue"; case Type.CHAR -> "charValue"; case Type.BYTE -> "byteValue";
+                    case Type.SHORT -> "shortValue"; case Type.INT -> "intValue"; case Type.LONG -> "longValue";
+                    case Type.FLOAT -> "floatValue"; default -> "doubleValue";
+                };
+                c.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, w, m, "()" + ret.getDescriptor(), false));
+            }
+        }
+        c.add(new InsnNode(ret.getOpcode(Opcodes.IRETURN)));
     }
 
     static void box(InsnList c, Type t) {
@@ -239,7 +441,7 @@ public class HookGen {
 
     static int countInjects(ClassNode c) {
         int n = 0;
-        for (MethodNode m : c.methods) if (find(m.visibleAnnotations, INJECT) != null || find(m.invisibleAnnotations, INJECT) != null) n++;
+        for (MethodNode m : c.methods) if (injector(m) != null) n++;
         return n;
     }
 
@@ -264,7 +466,7 @@ public class HookGen {
 
     static void writeJar(Path p) throws IOException {
         String cfg = "{\n  \"required\": false,\n  \"package\": \"dev.pufferfish.hooks\",\n  \"compatibilityLevel\": \"JAVA_21\",\n"
-                + "  \"injectors\": { \"defaultRequire\": 0 },\n"
+                + "  \"injectors\": { \"defaultRequire\": 0 },\n  \"mixinextras\": { \"minVersion\": \"0.5.0\" },\n"
                 + "  \"mixins\": " + jsonList(commonMixins) + ",\n  \"client\": " + jsonList(clientMixins) + "\n}\n";
         String fmj = "{\n  \"schemaVersion\": 1,\n  \"id\": \"pufferfish-hooks\",\n  \"version\": \"1.0.0\",\n"
                 + "  \"name\": \"Pufferfish runtime mixin hooks\",\n  \"mixins\": [\"pufferfish-hooks.mixins.json\"]\n}\n";

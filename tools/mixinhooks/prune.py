@@ -7,7 +7,7 @@ table = {}
 with zipfile.ZipFile(jar) as z:
     for line in z.read("pufferfish-hooks.txt").decode().splitlines():
         p = line.split("\t")
-        if len(p) == 5: table[p[0]] = f"{p[2]}#{p[3]}{p[4]}"
+        if len(p) >= 5: table[p[0]] = f"{p[2]}#{p[3]}{p[4]}"
 bad = set()
 for line in open(log, errors="replace"):
     if re.search(r"Exception|Error|error", line):
