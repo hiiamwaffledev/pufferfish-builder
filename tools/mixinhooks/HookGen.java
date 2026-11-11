@@ -121,17 +121,20 @@ public class HookGen {
         cn.invisibleAnnotations = new ArrayList<>(List.of(mixinAnn));
         int made = 0;
         for (MethodNode m : src.methods) {
-            Spec sp = spec(m, itf);
+            Spec sp;
+            try { sp = spec(m, itf); } catch (RuntimeException e) { skip("generator error " + e.getClass().getSimpleName(), 1); continue; }
             if (sp == null) continue;
             if (sp.skip != null) { skip(sp.skip, 1); continue; }
             if (exclude.contains(mixinName + "#" + m.name + m.desc)) { skip("failed in a previous bake", 1); continue; }
             String why = descProblem(sp.desc);
             if (why != null) { skip(why, 1); continue; }
+            MethodNode st;
+            try { st = stub(m, sp, nextId); } catch (RuntimeException e) { skip("generator error " + e.getClass().getSimpleName(), 1); continue; }
             int id = nextId++;
             table.append(id).append('\t').append(modId).append('\t').append(mixinName).append('\t').append(m.name).append('\t').append(m.desc)
                  .append('\t').append(sp.drop).append('\n');
             kinds.merge(sp.kind, 1, Integer::sum);
-            cn.methods.add(stub(m, sp, id));
+            cn.methods.add(st);
             made++;
         }
         if (made == 0) return;
@@ -198,7 +201,7 @@ public class HookGen {
                 int i = 0;
                 if (ps.length > 1) {   // handler takes all target args: the modified one is "index", else the only one of the return type
                     Object idx = val(a, "index");
-                    if (idx instanceof Integer n) i = n;
+                    if (idx instanceof Integer n && n < ps.length && ps[n].equals(ret)) i = n;
                     else {
                         i = -1;
                         for (int j = 0; j < ps.length; j++) if (ps[j].equals(ret)) { if (i >= 0) return Spec.no(k, "ambiguous ModifyArg"); i = j; }
