@@ -402,6 +402,7 @@ public final class RuntimeMixins {
         boolean changed = mi != null;
         for (MethodNode m : cn.methods) changed |= rewriteCalls(m, mi);
         changed |= erase(cn, mi);
+        changed |= foreignShim(cn);
         for (MethodNode m : cn.methods) changed |= unavailable(m);
         for (MethodNode m : cn.methods) changed |= widened(m);
         for (MethodNode m : cn.methods) changed |= privateCtors(m);
@@ -597,6 +598,39 @@ public final class RuntimeMixins {
     static final java.util.regex.Pattern UNAVAILABLE = java.util.regex.Pattern.compile(
         "(java/awt|javax/swing|javax/imageio|javax/sound|javax/print|java/beans|java/applet|java/sql|javax/sql|java/rmi"
         + "|javax/script|javax/tools|javax/naming|javax/lang|javax/annotation/processing|java/util/prefs|java/lang/foreign)/.*");
+
+    static final String MSEG = "java/lang/foreign/MemorySegment", PFSEG = "dev/pufferfish/runtime/mixin/PfSegment";
+    static final Set<String> MSEG_OK = Set.of("ofAddress(J)Ljava/lang/foreign/MemorySegment;", "address()J", "byteSize()J",
+            "reinterpret(J)Ljava/lang/foreign/MemorySegment;", "asSlice(J)Ljava/lang/foreign/MemorySegment;",
+            "asSlice(JJ)Ljava/lang/foreign/MemorySegment;", "asByteBuffer()Ljava/nio/ByteBuffer;");
+    /** MemorySegment → PfSegment when a class only uses the raw-address subset (see PfSegment) */
+    private static boolean foreignShim(ClassNode cn) {
+        boolean uses = false;
+        for (MethodNode m : cn.methods) for (AbstractInsnNode n : m.instructions) {
+            if (n instanceof MethodInsnNode c && c.owner.equals(MSEG)) { if (!MSEG_OK.contains(c.name + c.desc)) return false; uses = true; }
+            else if (n instanceof FieldInsnNode f && f.owner.equals(MSEG)) return false;
+            else if (n instanceof InvokeDynamicInsnNode) { if (n.toString().contains(MSEG)) return false; }
+        }
+        if (!uses) return false;
+        String from = "L" + MSEG + ";", to = "L" + PFSEG + ";";
+        java.util.function.UnaryOperator<String> d = x -> x == null ? null : x.replace(from, to);
+        for (FieldNode f : cn.fields) { f.desc = d.apply(f.desc); f.signature = d.apply(f.signature); }
+        for (MethodNode m : cn.methods) {
+            m.desc = d.apply(m.desc); m.signature = d.apply(m.signature);
+            if (m.localVariables != null) m.localVariables.clear();
+            for (AbstractInsnNode n : m.instructions) {
+                if (n instanceof MethodInsnNode c) {
+                    c.desc = d.apply(c.desc);
+                    if (c.owner.equals(MSEG)) { c.owner = PFSEG; c.itf = false; if (c.getOpcode() == Opcodes.INVOKEINTERFACE) c.setOpcode(Opcodes.INVOKEVIRTUAL); }
+                } else if (n instanceof FieldInsnNode f) f.desc = d.apply(f.desc);
+                else if (n instanceof TypeInsnNode t) { if (t.desc.equals(MSEG)) t.desc = PFSEG; else t.desc = d.apply(t.desc); }
+                else if (n instanceof LdcInsnNode l && l.cst instanceof Type ty && ty.getDescriptor().contains(from)) l.cst = Type.getType(d.apply(ty.getDescriptor()));
+                else if (n instanceof MultiANewArrayInsnNode ma) ma.desc = d.apply(ma.desc);
+            }
+            if (m.tryCatchBlocks != null) for (TryCatchBlockNode t : m.tryCatchBlocks) if (MSEG.equals(t.type)) t.type = PFSEG;
+        }
+        return true;
+    }
 
     private static boolean unavailable(MethodNode m) {
         boolean ch = false;
@@ -966,17 +1000,25 @@ public final class RuntimeMixins {
 
     private static final Map<String, Set<String>> itfMethods = new HashMap<>();
     /** the dispatch interface (from itfs) that declares name+desc, or null */
+    private static final Map<String, List<String>> itfSupers = new HashMap<>();
     private static String itfDeclaring(Collection<String> itfs, String nameDesc) {
-        for (String i : itfs) {
-            if (!dispatchItf.containsKey(i)) continue;
+        // breadth-first over the mod interfaces and their super-interfaces (Sodium: BakedQuadView extends ModelQuadView,
+        // whose default sodium$calculateNormal the mixin calls on itself)
+        Deque<String> q = new ArrayDeque<>(itfs); Set<String> seen = new HashSet<>();
+        while (!q.isEmpty()) {
+            String i = q.poll();
+            if (!seen.add(i) || !dispatchItf.containsKey(i)) continue;
             Set<String> ms = cached(itfMethods, i, k -> {
-                Set<String> r = new HashSet<>();
+                Set<String> r = new HashSet<>(); List<String> sup = new ArrayList<>();
                 try (InputStream in = loader.getResourceAsStream(k + ".class")) {
-                    if (in != null) for (MethodNode mn : node(in.readAllBytes()).methods) if ((mn.access & Opcodes.ACC_STATIC) == 0) r.add(mn.name + mn.desc);
+                    if (in != null) { ClassNode n = node(in.readAllBytes()); sup.addAll(n.interfaces);
+                        for (MethodNode mn : n.methods) if ((mn.access & Opcodes.ACC_STATIC) == 0) r.add(mn.name + mn.desc); }
                 } catch (IOException ignored) { }
+                synchronized (itfSupers) { itfSupers.put(k, sup); }
                 return r;
             });
             if (ms.contains(nameDesc)) return i;
+            synchronized (itfSupers) { q.addAll(itfSupers.getOrDefault(i, List.of())); }
         }
         return null;
     }

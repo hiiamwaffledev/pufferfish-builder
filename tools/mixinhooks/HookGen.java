@@ -51,6 +51,7 @@ public class HookGen {
         writeJar(Paths.get(a[0]));
         System.out.printf("[hookgen] %d hooks %s in %d stand-in mixins (%d common, %d client); %d handlers skipped %s%n",
                 nextId, kinds, mixinCount, commonMixins.size(), clientMixins.size(), skipped, skipWhy);
+        System.out.printf("[hookgen] access wideners: %d accessible/extendable entries seen, %d kept, %d stale dropped%n", awSeen, awEntries.size(), awDropped);
     }
 
     // ---- mod / config discovery -------------------------------------------------------------------------------
@@ -64,6 +65,8 @@ public class HookGen {
         if (fmj != null) {
             String json = new String(fmj, StandardCharsets.UTF_8);
             String modId = str(json, "id");
+            String aw = str(json, "accessWidener");
+            if (aw != null && files.get(aw) != null) accessWidener(new String(files.get(aw), StandardCharsets.UTF_8));
             for (String[] cfg : mixinConfigs(json)) {
                 byte[] c = files.get(cfg[0]);
                 if (c != null) scanConfig(modId, new String(c, StandardCharsets.UTF_8), cfg[1], files);
@@ -503,16 +506,51 @@ public class HookGen {
         return r;
     }
 
+    // ---- access wideners -----------------------------------------------------------------------------------------
+    // The AOT game keeps private members private, and a runtime mod class can't call a private super constructor (Sodium
+    // NonStoringBuilderPool extends SectionBufferBuilderPool) or be granted access by reflection everywhere. The hooks mod
+    // carries the union of the scanned mods' accessible/extendable entries, so the bake widens those members for real.
+    // mutable is left out (removing final costs the AOT build constant folding; runtime writes go through PfRefl/Unsafe).
+    static final Set<String> awEntries = new TreeSet<>();
+    static int awSeen, awDropped;
+    static void accessWidener(String text) {
+        for (String line : text.split("\n")) {
+            int h = line.indexOf('#'); if (h >= 0) line = line.substring(0, h);
+            String[] t = line.trim().split("\\s+");
+            if (t.length < 3) continue;
+            String kind = t[0].startsWith("transitive-") ? t[0].substring(11) : t[0];
+            if (!kind.equals("accessible") && !kind.equals("extendable")) continue;
+            awSeen++;
+            String e = kind + " " + String.join(" ", Arrays.copyOfRange(t, 1, t.length));
+            if (awValid(t)) awEntries.add(e); else awDropped++;
+        }
+    }
+    /** class [name desc] exists in this game version (a stale entry would fail the bake) */
+    static boolean awValid(String[] t) {
+        try (InputStream in = cp.getResourceAsStream(t[2] + ".class")) {
+            if (in == null) return false;
+            if (t[1].equals("class")) return t.length == 3;
+            if (t.length != 5) return false;
+            ClassNode cn = new ClassNode(); new ClassReader(in.readAllBytes()).accept(cn, ClassReader.SKIP_CODE);
+            if (t[1].equals("field")) return cn.fields.stream().anyMatch(f -> f.name.equals(t[3]) && f.desc.equals(t[4]));
+            if (t[1].equals("method")) return cn.methods.stream().anyMatch(m -> m.name.equals(t[3]) && m.desc.equals(t[4]));
+        } catch (Exception ignored) { }
+        return false;
+    }
+
     static void writeJar(Path p) throws IOException {
         String cfg = "{\n  \"required\": false,\n  \"package\": \"dev.pufferfish.hooks\",\n  \"compatibilityLevel\": \"JAVA_21\",\n"
                 + "  \"injectors\": { \"defaultRequire\": 0 },\n  \"mixinextras\": { \"minVersion\": \"0.5.0\" },\n"
                 + "  \"mixins\": " + jsonList(commonMixins) + ",\n  \"client\": " + jsonList(clientMixins) + "\n}\n";
         String fmj = "{\n  \"schemaVersion\": 1,\n  \"id\": \"pufferfish-hooks\",\n  \"version\": \"1.0.0\",\n"
-                + "  \"name\": \"Pufferfish runtime mixin hooks\",\n  \"mixins\": [\"pufferfish-hooks.mixins.json\"]\n}\n";
+                + "  \"name\": \"Pufferfish runtime mixin hooks\",\n  \"mixins\": [\"pufferfish-hooks.mixins.json\"]"
+                + (awEntries.isEmpty() ? "" : ",\n  \"accessWidener\": \"pufferfish-hooks.accesswidener\"") + "\n}\n";
         try (var z = new ZipOutputStream(Files.newOutputStream(p))) {
             put(z, "fabric.mod.json", fmj.getBytes(StandardCharsets.UTF_8));
             put(z, "pufferfish-hooks.mixins.json", cfg.getBytes(StandardCharsets.UTF_8));
             put(z, "pufferfish-hooks.txt", table.toString().getBytes(StandardCharsets.UTF_8));
+            if (!awEntries.isEmpty())
+                put(z, "pufferfish-hooks.accesswidener", ("accessWidener v1 official\n" + String.join("\n", awEntries) + "\n").getBytes(StandardCharsets.UTF_8));
             for (var e : out.entrySet()) put(z, e.getKey(), e.getValue());
         }
     }
