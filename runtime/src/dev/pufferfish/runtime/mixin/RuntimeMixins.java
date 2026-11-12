@@ -1033,6 +1033,23 @@ public final class RuntimeMixins {
             }
             cn.methods.add(dispatchMethod(itf, im, all));
         }
+        // methods inherited from game/JDK super-interfaces (LithiumInventory extends Container: getMaxStackSize). The AOT
+        // image has no .class resources for those, so take them from reflection; the object really implements that
+        // interface (else the mixin is off), so forward with invokeinterface.
+        try {
+            for (Method rm : Class.forName(itf.replace('/', '.'), false, loader).getMethods()) {
+                Class<?> d = rm.getDeclaringClass();
+                if (!d.isInterface() || java.lang.reflect.Modifier.isStatic(rm.getModifiers()) || !jvmPublic(d)) continue;
+                String dn = Type.getInternalName(d), md = Type.getMethodDescriptor(rm);
+                if (dispatchItf.containsKey(dn) || !done.add(rm.getName() + md)) continue;
+                MethodNode f = new MethodNode(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, rm.getName(), "(Ljava/lang/Object;" + md.substring(1), null, null);
+                f.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0)); f.instructions.add(new TypeInsnNode(Opcodes.CHECKCAST, dn));
+                int slot = 1; for (Type t : Type.getArgumentTypes(md)) { f.instructions.add(new VarInsnNode(t.getOpcode(Opcodes.ILOAD), slot)); slot += t.getSize(); }
+                f.instructions.add(new MethodInsnNode(Opcodes.INVOKEINTERFACE, dn, rm.getName(), md, true));
+                f.instructions.add(new InsnNode(Type.getReturnType(md).getOpcode(Opcodes.IRETURN)));
+                cn.methods.add(f);
+            }
+        } catch (Throwable ignored) { }
         erase(cn, null);   // same descriptors as the (erased) companions and runtime mod classes it is called from
         ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
             @Override protected String getCommonSuperClass(String x, String y) { return "java/lang/Object"; }
