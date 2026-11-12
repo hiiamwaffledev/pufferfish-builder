@@ -81,6 +81,26 @@ public final class PfRefl {
     public static boolean class$isAssignableFrom(Class<?> a, Class<?> b) { return a.isAssignableFrom(b) || RuntimeMixins.virtuallyImplements(a, b); }
     public static boolean class$isInstance(Class<?> a, Object o) { return a.isInstance(o) || (o != null && RuntimeMixins.virtuallyImplements(a, o.getClass())); }
     public static Object class$cast(Class<?> a, Object o) { return o == null || class$isInstance(a, o) ? o : a.cast(o); }
+    private static final ConcurrentHashMap<String, java.lang.invoke.MethodHandle> SPECIALS = new ConcurrentHashMap<>();
+    /** super.name(args) on self, non-virtually: the special caller is the mixin target self is an instance of */
+    public static Object invokeSpecial(Object self, Object[] args, String owner, String name, String desc, String targets) {
+        String caller = null;
+        for (String t : targets.split(",")) { if (isInstance(self, t)) { caller = t; break; } }
+        if (caller == null) caller = targets.split(",")[0];
+        String key = caller + "|" + owner + "." + name + desc, c0 = caller;
+        java.lang.invoke.MethodHandle h = SPECIALS.get(key);
+        if (h == null) {
+            try {
+                Class<?> callerC = cls(c0), ownerC = cls(owner);
+                java.lang.invoke.MethodType mt = java.lang.invoke.MethodType.fromMethodDescriptorString(desc, RuntimeMixins.loader());
+                h = java.lang.invoke.MethodHandles.privateLookupIn(callerC, java.lang.invoke.MethodHandles.lookup())
+                        .findSpecial(ownerC, name, mt, callerC).asSpreader(1, Object[].class, mt.parameterCount())
+                        .asType(java.lang.invoke.MethodType.methodType(Object.class, Object.class, Object[].class));
+            } catch (ReflectiveOperationException e) { throw new IncompatibleClassChangeError("super." + name + desc + " from " + c0 + ": " + e); }
+            SPECIALS.put(key, h);
+        }
+        try { return h.invokeExact(self, args); } catch (Throwable t) { throw sneaky(t); }
+    }
     public static Object construct(Object[] args, String owner, String desc) {
         try { return ctor(owner, desc).newInstance(args); }
         catch (InvocationTargetException e) { throw sneaky(e.getCause()); }

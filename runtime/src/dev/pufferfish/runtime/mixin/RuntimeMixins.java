@@ -205,7 +205,7 @@ public final class RuntimeMixins {
         return cached(accessibleCache, owner + "<init>" + desc, k -> {
             Class<?> c;
             try { c = Class.forName(owner.replace('/', '.'), false, loader.getParent()); } catch (Throwable t) { return true; }
-            if (!java.lang.reflect.Modifier.isPublic(c.getModifiers()) || mentionsHidden(desc)) return false;
+            if (!jvmPublic(c) || mentionsHidden(desc)) return false;
             try { return java.lang.reflect.Modifier.isPublic(c.getDeclaredConstructor(PfRefl.params(desc)).getModifiers()); }
             catch (Throwable t) { return true; }
         });
@@ -289,6 +289,8 @@ public final class RuntimeMixins {
                 if (id == null) continue;
                 m.setAccessible(true);
                 int drop = hookDrop.getOrDefault(id, 0);
+                Hook direct = bridge(comp, m, id, inst);
+                if (direct != null) { PfHooks.H[id] = direct; hooked++; bridged++; unmatched.remove(id); continue; }
                 PfHooks.H[id] = (self, args) -> {
                     int n = args.length - drop, o = inst ? 1 : 0;
                     Object[] a = new Object[n + o];
@@ -307,11 +309,54 @@ public final class RuntimeMixins {
 
     public static List<String> report() {
         List<String> r = new ArrayList<>(report);
-        r.add(0, mixins.size() + " runtime mixin classes (" + skipped + " skipped, target missing; " + disabled + " off, unsupported injectors), " + hooked + " injectors hooked, " + unsupported + " injectors unsupported");
+        r.add(0, mixins.size() + " runtime mixin classes (" + skipped + " skipped, target missing; " + disabled + " off, unsupported injectors), " + hooked + " injectors hooked (" + bridged + " direct), " + unsupported + " injectors unsupported");
         return r;
     }
 
     /** original handler descriptor: instance handlers got the target prepended as parameter 0 */
+    static int bridged;
+    /** Direct hook: <companion pkg>/PfHook$id.call(self, args) → invokestatic companion.handler(unboxed args), no
+     *  Method.invoke (slow in Crema's interpreter, opaque to the JIT). null if a parameter type isn't nameable there. */
+    private static Hook bridge(Class<?> comp, Method m, int id, boolean inst) {
+        if (Boolean.getBoolean("pf.hooks.reflective") || !java.lang.reflect.Modifier.isPublic(m.getModifiers())) return null;
+        String pkg = comp.getPackageName();
+        for (Class<?> t : m.getParameterTypes()) if (!nameable(t, pkg)) return null;
+        if (!nameable(m.getReturnType(), pkg)) return null;
+        String own = Type.getInternalName(comp), name = (pkg.isEmpty() ? "" : pkg.replace('.', '/') + "/") + "PfHook$" + id;
+        ClassNode cn = new ClassNode();
+        cn.version = Opcodes.V21; cn.access = Opcodes.ACC_PUBLIC | Opcodes.ACC_FINAL | Opcodes.ACC_SYNTHETIC; cn.name = name;
+        cn.superName = "java/lang/Object"; cn.interfaces = List.of("dev/pufferfish/runtime/mixin/Hook");
+        MethodNode init = new MethodNode(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        init.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        init.instructions.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false));
+        init.instructions.add(new InsnNode(Opcodes.RETURN));
+        MethodNode call = new MethodNode(Opcodes.ACC_PUBLIC, "call", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", null, null);
+        InsnList c = call.instructions;
+        Type[] ps = Type.getArgumentTypes(m); Type rt = Type.getReturnType(m);
+        for (int i = 0; i < ps.length; i++) {
+            if (inst && i == 0) c.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            else { c.add(new VarInsnNode(Opcodes.ALOAD, 2)); c.add(ldcInt(inst ? i - 1 : i)); c.add(new InsnNode(Opcodes.AALOAD)); }
+            if (ps[i].getSort() == Type.OBJECT && ps[i].getInternalName().equals("java/lang/Object")) continue;
+            unbox(c, ps[i]);
+        }
+        c.add(new MethodInsnNode(Opcodes.INVOKESTATIC, own, m.getName(), Type.getMethodDescriptor(m), comp.isInterface()));
+        if (rt.getSort() == Type.VOID) c.add(new InsnNode(Opcodes.ACONST_NULL)); else box(c, rt);
+        c.add(new InsnNode(Opcodes.ARETURN));
+        cn.methods.add(init); cn.methods.add(call);
+        ClassWriter w = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES) {
+            @Override protected String getCommonSuperClass(String x, String y) { return "java/lang/Object"; }
+        };
+        try {
+            cn.accept(w);
+            generated.put(name, w.toByteArray());
+            return (Hook) Class.forName(name.replace('/', '.'), true, loader).getConstructor().newInstance();
+        } catch (Throwable t) { generated.remove(name); report.add("hook bridge " + id + " for " + comp.getSimpleName() + "." + m.getName() + " failed: " + t); return null; }
+    }
+    private static boolean nameable(Class<?> t, String pkg) {
+        while (t.isArray()) t = t.getComponentType();
+        return t.isPrimitive() || jvmPublic(t) || t.getPackageName().equals(pkg) && t.getClassLoader() == loader;
+    }
+
     private static String origDesc(Method m, boolean inst) {
         StringBuilder b = new StringBuilder("(");
         Class<?>[] ps = m.getParameterTypes();
@@ -325,9 +370,15 @@ public final class RuntimeMixins {
     /** type of "this" in a companion: the target, or Object for interface mixins and mixins with several targets */
     private static String companionSelf(MixinInfo mi) { return mi.itf || mi.targets.size() > 1 || !publicClass(mi.target) ? "java/lang/Object" : mi.target; }
     /** non-public game classes can't be named in checkcast/instanceof from runtime-mod packages */
+    /** JVM-level class access: a protected nested class is ACC_PUBLIC in its class file (getModifiers() shows the
+     *  source-level flags), so Mod Menu's ModListWidget may name AbstractSelectionList$Entry directly */
+    static boolean jvmPublic(Class<?> c) {
+        int m = c.getModifiers();
+        return java.lang.reflect.Modifier.isPublic(m) || (c.isMemberClass() && java.lang.reflect.Modifier.isProtected(m));
+    }
     private static boolean publicClass(String internal) {
         return cached(accessibleCache, internal + "!class", k -> {
-            try { return java.lang.reflect.Modifier.isPublic(Class.forName(internal.replace('/', '.'), false, loader).getModifiers()); }
+            try { return jvmPublic(Class.forName(internal.replace('/', '.'), false, loader)); }
             catch (Throwable t) { return true; }
         });
     }
@@ -381,7 +432,11 @@ public final class RuntimeMixins {
                 if (!mi.itf && mi.hasInit) keep.add(initToStatic(m, mi));
                 continue;
             }
-            if ((m.access & Opcodes.ACC_STATIC) != 0) { stat.add(m.name + eraseDesc(m.desc, mi)); keep.add(m); continue; }
+            if ((m.access & Opcodes.ACC_STATIC) != 0) {
+                stat.add(m.name + eraseDesc(m.desc, mi));
+                if (!m.name.equals("<clinit>")) m.access = (m.access & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED)) | Opcodes.ACC_PUBLIC;   // hook bridges call it
+                keep.add(m); continue;
+            }
             if ((m.access & Opcodes.ACC_ABSTRACT) != 0) { if (mi.itf) keep.add(m); continue; }
             // instance → static with the target in slot 0
             m.access = (m.access & ~(Opcodes.ACC_PRIVATE | Opcodes.ACC_PROTECTED)) | Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC;
@@ -502,8 +557,20 @@ public final class RuntimeMixins {
                     m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, DISPATCH_PKG + c.owner, "pf$default$" + c.name, "(Ljava/lang/Object;" + c.desc.substring(1), false));
                     done = true;
                 } else if (mi != null && c.getOpcode() == Opcodes.INVOKESPECIAL && !c.name.equals("<init>") && !c.owner.equals(mi.name)) {
-                    // super.foo() from a mixin extending the target's superclass: best effort, virtual call
-                    m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKEVIRTUAL, c.owner, c.name, c.desc, false)); done = true;
+                    // super.foo() from a mixin extending the target's superclass. When the mixin overrides foo itself
+                    // (Lithium EntityBasedExplosionDamageCalculatorMixin), a virtual call recurses forever → findSpecial;
+                    // otherwise a virtual call reaches the same method and stays fast.
+                    if (mi.declaredMethods.contains(c.name + c.desc)) {
+                        Type[] at = Type.getArgumentTypes(c.desc); Type rt = Type.getReturnType(c.desc);
+                        InsnList r = packArgs(at);
+                        r.add(new LdcInsnNode(c.owner)); r.add(new LdcInsnNode(c.name)); r.add(new LdcInsnNode(c.desc));
+                        r.add(new LdcInsnNode(String.join(",", mi.targets)));
+                        r.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "dev/pufferfish/runtime/mixin/PfRefl", "invokeSpecial",
+                                "(Ljava/lang/Object;[Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Object;", false));
+                        if (rt.getSort() == Type.VOID) r.add(new InsnNode(Opcodes.POP)); else unbox(r, rt);
+                        replace(m, c, r);
+                    } else m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKEVIRTUAL, c.owner, c.name, c.desc, false));
+                    done = true;
                 }
                 if (!done && dispatchItf.containsKey(c.owner) && c.getOpcode() == Opcodes.INVOKEINTERFACE) {
                     m.instructions.set(c, new MethodInsnNode(Opcodes.INVOKESTATIC, DISPATCH_PKG + c.owner, c.name, "(Ljava/lang/Object;" + c.desc.substring(1), false));
@@ -662,7 +729,7 @@ public final class RuntimeMixins {
         return cached(publicSuperCache, n, k -> {
             try {
                 for (Class<?> c = Class.forName(k.replace('/', '.'), false, loader.getParent()); c != null; c = c.getSuperclass())
-                    if (java.lang.reflect.Modifier.isPublic(c.getModifiers())) return c.getName().replace('.', '/');
+                    if (jvmPublic(c)) return c.getName().replace('.', '/');
             } catch (Throwable ignored) { }
             return "java/lang/Object";
         });
@@ -771,11 +838,18 @@ public final class RuntimeMixins {
     private static boolean accessible0(String owner, String name, boolean field) {
         try {
             Class<?> c = Class.forName(owner.replace('/', '.'), false, loader);
-            if (!java.lang.reflect.Modifier.isPublic(c.getModifiers())) return false;
+            if (!jvmPublic(c)) return false;
             for (Class<?> k = c; k != null; k = k.getSuperclass()) {
                 if (field) { for (var f : k.getDeclaredFields()) if (f.getName().equals(name)) return java.lang.reflect.Modifier.isPublic(f.getModifiers()); }
                 else for (var mm : k.getDeclaredMethods()) if (mm.getName().equals(name)) return java.lang.reflect.Modifier.isPublic(mm.getModifiers());
             }
+            // interface methods (LevelChunk.getSectionIndex is LevelHeightAccessor's default): public
+            if (!field) for (Class<?> k = c; k != null; k = k.getSuperclass())
+                for (Deque<Class<?>> q = new ArrayDeque<>(List.of(k.getInterfaces())); !q.isEmpty(); ) {
+                    Class<?> i = q.poll();
+                    for (var mm : i.getDeclaredMethods()) if (mm.getName().equals(name) && !java.lang.reflect.Modifier.isStatic(mm.getModifiers())) return jvmPublic(i);
+                    q.addAll(List.of(i.getInterfaces()));
+                }
         } catch (Throwable ignored) { }
         return false;
     }
