@@ -94,6 +94,8 @@ if [[ $MODE == crema* && ${PF_PRESERVE:-} != none ]]; then
     PRESERVE_ARGS+=(-H:Preserve=package=$p); done
   # runtime mixins: interpreted companion classes call these helpers directly
   [[ $INST == *-fabric-* ]] && PRESERVE_ARGS+=(-H:Preserve=package=dev.pufferfish.runtime.mixin)
+  # hot runtime (pufferfish-hot.jar in the game dir replaces the baked mixin runtime): keep the ASM it uses whole
+  [[ $INST == *-fabric-* ]] && PRESERVE_ARGS+=(-H:Preserve=package=org.objectweb.asm -H:Preserve=package=org.objectweb.asm.tree)
   # logging APIs every mod calls (LogManager.getLogger(), LoggerFactory.getLogger, Logger.info...). ModApiScan skips them
   # (partial registration makes reflection on them exact), so keep the API packages whole instead.
   for p in org.apache.logging.log4j org.apache.logging.log4j.spi org.apache.logging.log4j.message org.apache.logging.log4j.util \

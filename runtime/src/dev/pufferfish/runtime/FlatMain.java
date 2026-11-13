@@ -36,22 +36,27 @@ public final class FlatMain extends FabricLauncherBase {
         void add(Path p) {
             try { addURL(p.toUri().toURL()); } catch (java.net.MalformedURLException e) { throw new RuntimeException(e); }
         }
+        /** Hot runtime: mixin-runtime classes resolve to the hot jar (child-first there), not the baked copies. */
+        @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (Rt.hot != null && Rt.hotName(name.replace('.', '/'))) return Rt.hot.loadClass(name);
+            return super.loadClass(name, resolve);
+        }
         /** Every runtime mod class goes through RuntimeMixins (mixin companions, added-interface/accessor call sites). */
         @Override protected Class<?> findClass(String name) throws ClassNotFoundException {
             String internal = name.replace('.', '/');
             if (internal.startsWith("pf/proxy/") || internal.contains("PfHook$")) {
-                byte[] d = dev.pufferfish.runtime.mixin.RuntimeMixins.generated(internal);
+                byte[] d = Rt.generated(internal);
                 if (d != null) return defineClass(name, d, 0, d.length);
             }
             if (internal.startsWith("pf/dispatch/")) {
-                byte[] d = dev.pufferfish.runtime.mixin.RuntimeMixins.dispatcher(internal.substring("pf/dispatch/".length()));
+                byte[] d = Rt.dispatcher(internal.substring("pf/dispatch/".length()));
                 if (d != null) return defineClass(name, d, 0, d.length);
             }
             java.net.URL u = findResource(internal + ".class");
             if (u == null) throw new ClassNotFoundException(name);
             byte[] b;
             try (InputStream in = u.openStream()) { b = in.readAllBytes(); } catch (IOException e) { throw new ClassNotFoundException(name, e); }
-            try { b = dev.pufferfish.runtime.mixin.RuntimeMixins.transform(internal, b); }
+            try { b = Rt.transform(internal, b); }
             catch (Throwable t) { Log.warn(LogCategory.GENERAL, "[pufferfish] transform failed for %s: %s", name, t); }
             return defineClass(name, b, 0, b.length);
         }
@@ -133,11 +138,75 @@ public final class FlatMain extends FabricLauncherBase {
         }
         if (mods.isEmpty()) return;
         long t0 = System.nanoTime();
-        dev.pufferfish.runtime.mixin.RuntimeMixins.setup(cl, mods);
-        dev.pufferfish.runtime.mixin.RuntimeMixins.installHooks();
-        List<String> rep = dev.pufferfish.runtime.mixin.RuntimeMixins.report();
+        Rt.init(loader.getGameDir());
+        Rt.setup(cl, mods);
+        Rt.installHooks();
+        List<String> rep = Rt.report();
         Log.info(LogCategory.GENERAL, "[pufferfish] runtime mixins: %s (%d ms)", rep.get(0), (System.nanoTime() - t0) / 1_000_000);
         for (String l : rep.subList(1, rep.size())) Log.warn(LogCategory.GENERAL, "[pufferfish]   %s", l);
+    }
+
+    /**
+     * The mixin runtime (RuntimeMixins, PfRefl, ...) is baked into the image, but a newer copy can be dropped into the game
+     * dir as pufferfish-hot.jar (or -Dpf.hot=<jar>; -Dpf.hot=off ignores it). Its classes are then defined at runtime
+     * (Crema/JIT) and used instead of the baked ones, so runtime fixes need no image rebuild. Hook and PfHooks stay baked:
+     * the baked hook stand-ins call them.
+     */
+    static final class Rt {
+        static final String PKG = "dev/pufferfish/runtime/mixin/";
+        static volatile HotLoader hot;
+        static java.lang.reflect.Method mGen, mDisp, mTr, mSetup, mInstall, mReport;
+
+        static boolean hotName(String internal) {
+            return internal.startsWith(PKG) && !internal.equals(PKG + "Hook") && !internal.equals(PKG + "PfHooks");
+        }
+        static final class HotLoader extends java.net.URLClassLoader {
+            static { registerAsParallelCapable(); }
+            HotLoader(java.net.URL u, ClassLoader parent) { super("pufferfish-hot", new java.net.URL[] { u }, parent); }
+            @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (!hotName(name.replace('.', '/'))) return super.loadClass(name, resolve);
+                synchronized (getClassLoadingLock(name)) {
+                    Class<?> c = findLoadedClass(name);
+                    return c != null ? c : findClass(name);
+                }
+            }
+        }
+        static void init(Path gameDir) {
+            String prop = System.getProperty("pf.hot", "");
+            if (prop.equals("off")) return;
+            Path jar = prop.isEmpty() ? gameDir.resolve("pufferfish-hot.jar") : Paths.get(prop);
+            if (!Files.isRegularFile(jar)) return;
+            try {
+                HotLoader l = new HotLoader(jar.toUri().toURL(), FlatMain.class.getClassLoader());
+                Class<?> c = l.loadClass("dev.pufferfish.runtime.mixin.RuntimeMixins");
+                mGen = c.getMethod("generated", String.class);
+                mDisp = c.getMethod("dispatcher", String.class);
+                mTr = c.getMethod("transform", String.class, byte[].class);
+                mSetup = c.getMethod("setup", ClassLoader.class, List.class);
+                mInstall = c.getMethod("installHooks");
+                mReport = c.getMethod("report");
+                hot = l;
+                Log.info(LogCategory.GENERAL, "[pufferfish] hot runtime: %s (%d bytes, %s)", jar, Files.size(jar), Files.getLastModifiedTime(jar));
+            } catch (Throwable t) {
+                Log.warn(LogCategory.GENERAL, "[pufferfish] hot runtime %s unusable, using baked: %s", jar, t);
+            }
+        }
+        private static Object call(java.lang.reflect.Method m, Object... a) {
+            try { return m.invoke(null, a); }
+            catch (java.lang.reflect.InvocationTargetException e) {
+                Throwable c = e.getCause();
+                if (c instanceof RuntimeException r) throw r;
+                if (c instanceof Error r) throw r;
+                throw new RuntimeException(c);
+            } catch (IllegalAccessException e) { throw new RuntimeException(e); }
+        }
+        static byte[] generated(String i) { return hot == null ? dev.pufferfish.runtime.mixin.RuntimeMixins.generated(i) : (byte[]) call(mGen, i); }
+        static byte[] dispatcher(String i) { return hot == null ? dev.pufferfish.runtime.mixin.RuntimeMixins.dispatcher(i) : (byte[]) call(mDisp, i); }
+        static byte[] transform(String i, byte[] b) { return hot == null ? dev.pufferfish.runtime.mixin.RuntimeMixins.transform(i, b) : (byte[]) call(mTr, i, b); }
+        static void setup(ClassLoader cl, List<Object[]> mods) { if (hot == null) dev.pufferfish.runtime.mixin.RuntimeMixins.setup(cl, mods); else call(mSetup, cl, mods); }
+        static void installHooks() { if (hot == null) dev.pufferfish.runtime.mixin.RuntimeMixins.installHooks(); else call(mInstall); }
+        @SuppressWarnings("unchecked")
+        static List<String> report() { return hot == null ? dev.pufferfish.runtime.mixin.RuntimeMixins.report() : (List<String>) call(mReport); }
     }
 
     private GameProvider createGameProvider(String[] args) {
